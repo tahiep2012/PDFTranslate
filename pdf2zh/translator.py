@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 import unicodedata
 from copy import copy
 from string import Template
@@ -721,15 +723,17 @@ class GeminiTranslator(OpenAITranslator):
         "GEMINI_MODEL": "gemini-1.5-flash",
     }
     CustomPrompt = True
+    _last_request_time = 0.0
+    _lock = threading.Lock()
 
     def __init__(
         self, lang_in, lang_out, model, envs=None, prompt=None, ignore_cache=False
     ):
         self.set_envs(envs)
         base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-        api_key = self.envs["GEMINI_API_KEY"]
+        api_key = self.envs.get("GEMINI_API_KEY")
         if not model:
-            model = self.envs["GEMINI_MODEL"]
+            model = self.envs.get("GEMINI_MODEL", "gemini-1.5-flash")
         super().__init__(
             lang_in,
             lang_out,
@@ -740,6 +744,32 @@ class GeminiTranslator(OpenAITranslator):
         )
         self.prompttext = prompt
         self.add_cache_impact_parameters("prompt", self.prompt("", self.prompttext))
+
+    @retry(
+        retry=retry_if_exception_type((
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+            openai.APITimeoutError,
+        )),
+        stop=stop_after_attempt(50),
+        wait=wait_exponential(multiplier=2, min=4, max=30),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Gemini API rate limit or network busy, retrying in {retry_state.next_action.sleep:.1f}s... "
+            f"(Attempt {retry_state.attempt_number}/50)"
+        ),
+    )
+    def do_translate(self, text) -> str:
+        # Pacing control: ensure at least 4.0 seconds between requests across all threads (max 15 RPM free tier)
+        with GeminiTranslator._lock:
+            now = time.time()
+            elapsed = now - GeminiTranslator._last_request_time
+            safe_interval = 4.0  # safe limit for Gemini Free 15 RPM
+            if elapsed < safe_interval:
+                time.sleep(safe_interval - elapsed)
+            GeminiTranslator._last_request_time = time.time()
+
+        return super().do_translate(text)
 
 
 class AzureTranslator(BaseTranslator):
