@@ -720,7 +720,7 @@ class GeminiTranslator(OpenAITranslator):
     name = "gemini"
     envs = {
         "GEMINI_API_KEY": None,
-        "GEMINI_MODEL": "gemini-1.5-flash",
+        "GEMINI_MODEL": "gemini-flash-lite-latest",
     }
     CustomPrompt = True
     _last_request_time = 0.0
@@ -732,8 +732,9 @@ class GeminiTranslator(OpenAITranslator):
         self.set_envs(envs)
         base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
         api_key = self.envs.get("GEMINI_API_KEY")
-        if not model:
-            model = self.envs.get("GEMINI_MODEL", "gemini-1.5-flash")
+        # Map legacy or deprecated model names to current active Gemini models
+        if not model or model in ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash-001"]:
+            model = self.envs.get("GEMINI_MODEL") or "gemini-flash-lite-latest"
         super().__init__(
             lang_in,
             lang_out,
@@ -769,7 +770,14 @@ class GeminiTranslator(OpenAITranslator):
                 time.sleep(safe_interval - elapsed)
             GeminiTranslator._last_request_time = time.time()
 
-        return super().do_translate(text)
+        try:
+            return super().do_translate(text)
+        except openai.NotFoundError:
+            if self.model != "gemini-flash-lite-latest":
+                logger.info(f"Model {self.model} returned 404, falling back to gemini-flash-lite-latest")
+                self.model = "gemini-flash-lite-latest"
+                return super().do_translate(text)
+            raise
 
 
 class AzureTranslator(BaseTranslator):

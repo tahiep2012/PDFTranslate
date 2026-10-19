@@ -80,7 +80,7 @@ const DEFAULT_SERVICES = [
   { id: "openai:gpt-4o-mini", name: "OpenAI GPT-4o-mini", desc: "Dịch AI thông minh, cần OpenAI API Key", badge: "AI LLM" },
   { id: "deepseek:deepseek-chat", name: "DeepSeek-V3", desc: "Dịch tài liệu học thuật rất tốt, giá rẻ", badge: "AI LLM" },
   { id: "ollama:qwen2.5:7b", name: "Ollama (Offline)", desc: "Chạy mô hình AI cục bộ trên máy tính", badge: "Offline" },
-  { id: "gemini:gemini-1.5-flash", name: "Google Gemini", desc: "Mô hình đa phương thức từ Google", badge: "AI LLM" },
+  { id: "gemini:gemini-flash-lite-latest", name: "Google Gemini", desc: "Mô hình Gemini Flash thế hệ mới từ Google", badge: "AI LLM" },
 ];
 
 export default function App() {
