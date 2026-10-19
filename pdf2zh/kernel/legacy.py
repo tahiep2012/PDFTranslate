@@ -71,11 +71,13 @@ class LegacyKernel:
         result_files = translate(**kwargs)
 
         results = []
-        for mono_path, dual_path in result_files:
+        for item in result_files:
+            mono_path = item[0] if len(item) > 0 else None
+            dual_path = item[1] if len(item) > 1 else None
             results.append(
                 TranslateResult(
-                    mono_pdf=Path(mono_path),
-                    dual_pdf=Path(dual_path),
+                    mono_pdf=Path(mono_path) if mono_path else None,
+                    dual_pdf=Path(dual_path) if dual_path else None,
                 )
             )
         return results

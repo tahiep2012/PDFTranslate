@@ -232,6 +232,26 @@ class TranslateConverter(PDFConverterEx):
                     return True
             return False
 
+        # 预先扫描文档中的 URL，避免将 URL (如 https://... 或 monospace 字体) 误识别为数学公式
+        url_chars = set()
+        page_chars = [c for c in ltpage if isinstance(c, LTChar)]
+        words = []
+        curr_word = []
+        for c in page_chars:
+            if c.get_text().isspace():
+                if curr_word:
+                    words.append(curr_word)
+                    curr_word = []
+            else:
+                curr_word.append(c)
+        if curr_word:
+            words.append(curr_word)
+        for w in words:
+            w_text = "".join(c.get_text() for c in w)
+            if re.match(r"^(https?://|www\.|ftp://|[a-zA-Z0-9.-]+\.(com|org|net|edu|gov|io|ai|vn)(/|$))", w_text):
+                for c in w:
+                    url_chars.add(c)
+
         ############################################################
         # A. 原文档解析
         for child in ltpage:
@@ -243,9 +263,7 @@ class TranslateConverter(PDFConverterEx):
                 # 读取当前字符在 layout 中的类别
                 cx, cy = np.clip(int(child.x0), 0, w - 1), np.clip(int(child.y0), 0, h - 1)
                 cls = layout[cy, cx]
-                # 锚定文档中 bullet 的位置
-                if child.get_text() == "•":
-                    cls = 0
+                is_url_char = child in url_chars
                 # 判定当前字符是否属于公式
                 is_subscript = (
                     cls == xt_cls
@@ -253,7 +271,7 @@ class TranslateConverter(PDFConverterEx):
                     and child.size < pstk[-1].size * 0.79
                     and (xt is not None and abs(child.y0 - xt.y0) > child.size * 0.15)
                 )
-                if (                                                                                        # 判定当前字符是否属于公式
+                if not is_url_char and (                                                                    # URL 字符绝不作为数学公式处理
                     cls == 0                                                                                # 1. 类别为保留区域
                     or is_subscript                                                                         # 2. 角标字体（且存在基线偏移）
                     or vflag(child.fontname, child.get_text())                                              # 3. 公式字体
@@ -299,11 +317,22 @@ class TranslateConverter(PDFConverterEx):
                     if cls != xt_cls:
                         is_new_para = True
                     elif xt is not None and child.x1 < xt.x0:  # 换行
+                        BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·", "–", "—"}
                         line_vgap = abs(child.y0 - xt.y0)
                         char_sz = max(child.size, xt.size)
                         curr_text = sstk[-1].rstrip()
                         words = curr_text.split()
                         last_word = words[-1].lower() if words else ""
+
+                        # 检查当前行是否为列表项 (Bullet Point)
+                        is_bullet_item = child.get_text() in BULLET_CHARS
+
+                        # 检查上一段是否为列表项，而当前行不是列表项（列表结束，正文开始）
+                        was_bullet_prev = any(curr_text.lstrip().startswith(b) for b in BULLET_CHARS)
+                        bullet_ended = was_bullet_prev and not is_bullet_item and (
+                            child.x0 < pstk[-1].x0 - 5.0 or line_vgap >= char_sz * 1.3 or (curr_text and curr_text[-1] in ".?!:;")
+                        )
+
                         # 检查上一行是否以介词、冠词、连词或属格 ('s) 结尾，或者当前行以小写字母开头（属于同一断句短语）
                         is_continuation = (
                             curr_text.endswith("'s")
@@ -314,8 +343,10 @@ class TranslateConverter(PDFConverterEx):
                             }
                             or child.get_text().islower()
                         )
+                        if is_bullet_item or bullet_ended:
+                            is_new_para = True
                         # 1. 明显的垂直行距 (>= 1.7 倍字号，例如目录、列表项、分段)
-                        if line_vgap >= char_sz * 1.7 and not is_continuation:
+                        elif line_vgap >= char_sz * 1.7 and not is_continuation:
                             is_new_para = True
                         # 2. 前一行提前结束（留白较多）且垂直行距 >= 1.2 倍字号，或前一行以标点结尾
                         elif line_vgap >= char_sz * 1.2 and not is_continuation:
@@ -424,7 +455,16 @@ class TranslateConverter(PDFConverterEx):
                         })
                 return s
             try:
-                s_clean = s.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\ufffd", "'")
+                # 保护列表项开头的 Bullet 符号（•, ▪, ▸ 等），防止翻译引擎篡改、重复或丢失
+                bullet_prefix = ""
+                m_bullet = re.match(r"^(\s*[•▪▸►○●■◆◇·–—]\s*)", s)
+                if m_bullet:
+                    bullet_prefix = m_bullet.group(1)
+                    s_to_trans = s[len(bullet_prefix):]
+                else:
+                    s_to_trans = s
+
+                s_clean = s_to_trans.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\ufffd", "'")
                 if re.search(r'\b[A-Za-z]\s+[A-Za-z]\s+[A-Za-z]\b', s_clean):
                     chunks = re.split(r'(\{v\d+\}|\s{2,})', s_clean)
                     new_chunks = []
@@ -442,6 +482,8 @@ class TranslateConverter(PDFConverterEx):
                 new = self.translator.translate(s_clean)
                 if new:
                     new = unicodedata.normalize("NFC", new)
+                if bullet_prefix:
+                    new = bullet_prefix + (new or "")
                 with done_lock:
                     done_s += 1
                     if self.callback:
@@ -533,7 +575,7 @@ class TranslateConverter(PDFConverterEx):
             fcur = None
             word_counter = 0
 
-            def push_word_internal(w_str, t_x, l_idx, w_id):
+            def push_word_internal(w_str, t_x, l_idx, w_id, color=None):
                 cur_f = None
                 cur_chunk = ""
                 cur_tx = t_x
@@ -555,6 +597,7 @@ class TranslateConverter(PDFConverterEx):
                             "lidx": l_idx,
                             "width": w_,
                             "word_id": w_id,
+                            "color": color,
                         })
                         cur_chunk = c
                         cur_f = f_
@@ -574,6 +617,7 @@ class TranslateConverter(PDFConverterEx):
                         "lidx": l_idx,
                         "width": w_,
                         "word_id": w_id,
+                        "color": color,
                     })
 
             for tok in tokens:
@@ -639,6 +683,9 @@ class TranslateConverter(PDFConverterEx):
                     continue
 
                 # Normal word token
+                is_url_tok = bool(re.search(r"^(https?://|www\.)", tok))
+                tok_color = (0.0, 0.2, 0.85) if is_url_tok else None
+
                 char_infos = [get_char_info(c, cur_size) for c in tok]
                 word_width = sum(adv for _, adv in char_infos)
 
@@ -652,7 +699,7 @@ class TranslateConverter(PDFConverterEx):
                     lidx += 1
 
                 word_counter += 1
-                push_word_internal(tok, cur_x, lidx, word_counter)
+                push_word_internal(tok, cur_x, lidx, word_counter, color=tok_color)
                 cur_x += word_width
 
             return ops_vals, lidx
@@ -761,7 +808,11 @@ class TranslateConverter(PDFConverterEx):
             for vals in pl["ops_vals"]:
                 actual_y = vals["dy"] + final_y - vals["lidx"] * pl["size"] * pl["line_height"]
                 if vals["type"] == OpType.TEXT:
-                    ops_list.append(gen_op_txt(vals["font"], vals["size"], vals["x"], actual_y, vals["rtxt"]))
+                    if vals.get("color"):
+                        r, g, b = vals["color"]
+                        ops_list.append(f"q {r:.2f} {g:.2f} {b:.2f} rg /{vals['font']} {vals['size']:f} Tf 1 0 0 1 {vals['x']:f} {actual_y:f} Tm [<{vals['rtxt']}>] TJ Q ")
+                    else:
+                        ops_list.append(gen_op_txt(vals["font"], vals["size"], vals["x"], actual_y, vals["rtxt"]))
                 elif vals["type"] == OpType.LINE:
                     ops_list.append(gen_op_line(vals["x"], actual_y, vals["xlen"], vals["ylen"], vals["linewidth"]))
 
