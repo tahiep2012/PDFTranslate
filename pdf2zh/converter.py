@@ -14,7 +14,7 @@ from pdfminer.pdffont import PDFCIDFont, PDFUnicodeNotDefined
 from pdfminer.pdfinterp import PDFGraphicState, PDFResourceManager
 from pdfminer.utils import apply_matrix_pt, mult_matrix
 from pymupdf import Font
-from tenacity import retry, wait_fixed
+from tenacity import retry, wait_fixed, stop_after_attempt, retry_if_exception
 
 from pdf2zh.translator import (
     AnythingLLMTranslator,
@@ -498,7 +498,15 @@ class TranslateConverter(PDFConverterEx):
         done_s = 0
         done_lock = threading.Lock()
 
-        @retry(wait=wait_fixed(1))
+        def is_recoverable_error(exception):
+            msg = str(exception).lower()
+            # Do not retry permanent client errors (invalid key, model not found, forbidden, bad request)
+            for err_kw in ["not found", "404", "invalid api key", "please pass a valid api key", "unauthorized", "401", "permission_denied", "403"]:
+                if err_kw in msg:
+                    return False
+            return True
+
+        @retry(wait=wait_fixed(2), stop=stop_after_attempt(3), retry=retry_if_exception(is_recoverable_error))
         def worker(s: str):  # 多线程翻译
             nonlocal done_s
             p_idx = getattr(self, "current_page_idx", 1)
