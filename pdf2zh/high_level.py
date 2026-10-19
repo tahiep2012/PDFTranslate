@@ -82,6 +82,8 @@ def translate_patch(
     service: str = "",
     noto_name: str = "",
     noto: Font = None,
+    noto_italic: Font = None,
+    noto_bold: Font = None,
     callback: object = None,
     cancellation_event: asyncio.Event = None,
     model: OnnxModel = None,
@@ -150,6 +152,8 @@ def translate_patch(
         final_prompt,
         ignore_cache,
         callback,
+        noto_italic=noto_italic,
+        noto_bold=noto_bold,
     )
 
     assert device is not None
@@ -473,6 +477,19 @@ def translate_stream(
     noto_name = NOTO_NAME
     noto = Font(noto_name, font_path)
     font_list.append((noto_name, font_path))
+
+    noto_italic = None
+    noto_bold = None
+    if lang_out.lower() in ["vi", "vietnamese"]:
+        for base in ["C:/Windows/Fonts/times", "C:/Windows/Fonts/arial"]:
+            fi = f"{base}i.ttf"
+            fb = f"{base}bd.ttf"
+            if Path(fi).exists() and Path(fb).exists():
+                font_list.append(("noto_italic", fi))
+                font_list.append(("noto_bold", fb))
+                noto_italic = Font("noto_italic", fi)
+                noto_bold = Font("noto_bold", fb)
+                break
 
     # Keep a copy of original stream for doc_en dual mode
     raw_stream = stream

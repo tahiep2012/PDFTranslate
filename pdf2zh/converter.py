@@ -131,6 +131,11 @@ class Paragraph:
         self.line_breaks: int = 0
         self.line_end_xs: list[float] = []
         self.is_justified: bool = False
+        self.is_centered: bool = False
+        self.is_toc_item: bool = False
+        self.is_italic: bool = False
+        self.is_bold: bool = False
+        self.color = None
 
 
 # fmt: off
@@ -151,6 +156,8 @@ class TranslateConverter(PDFConverterEx):
         prompt: Template = None,
         ignore_cache: bool = False,
         callback=None,
+        noto_italic: Font = None,
+        noto_bold: Font = None,
     ) -> None:
         super().__init__(rsrcmgr)
         self.vfont = vfont
@@ -159,6 +166,10 @@ class TranslateConverter(PDFConverterEx):
         self.layout = layout
         self.noto_name = noto_name
         self.noto = noto
+        self.noto_italic = noto_italic
+        self.noto_bold = noto_bold
+        self.noto_italic_name = "noto_italic" if noto_italic else None
+        self.noto_bold_name = "noto_bold" if noto_bold else None
         self.callback = callback
         self.translator: BaseTranslator = None
         self.pages_data: list = []
@@ -264,6 +275,23 @@ class TranslateConverter(PDFConverterEx):
                 cx, cy = np.clip(int(child.x0), 0, w - 1), np.clip(int(child.y0), 0, h - 1)
                 cls = layout[cy, cx]
                 is_url_char = child in url_chars
+
+                ch_font = child.fontname
+                if isinstance(ch_font, bytes):
+                    try:
+                        ch_font = ch_font.decode("utf-8")
+                    except Exception:
+                        ch_font = ""
+                ch_is_italic = bool(re.search(r"(italic|oblique)", ch_font, re.IGNORECASE))
+                ch_is_bold = bool(re.search(r"(bold|black|heavy)", ch_font, re.IGNORECASE))
+
+                gs = getattr(child, "graphicstate", None)
+                ch_ncolor = getattr(gs, "ncolor", None) if gs else None
+                ch_color = None
+                if isinstance(ch_ncolor, (list, tuple)) and len(ch_ncolor) == 3:
+                    if not (ch_ncolor[0] < 0.1 and ch_ncolor[1] < 0.1 and ch_ncolor[2] < 0.1):
+                        ch_color = tuple(ch_ncolor)
+
                 # 判定当前字符是否属于公式
                 is_subscript = (
                     cls == xt_cls
@@ -315,7 +343,8 @@ class TranslateConverter(PDFConverterEx):
                 if not vstk:
                     is_new_para = False
                     if cls != xt_cls:
-                        is_new_para = True
+                        if not child.get_text().isspace():
+                            is_new_para = True
                     elif xt is not None and child.x1 < xt.x0:  # 换行
                         BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·", "–", "—"}
                         line_vgap = abs(child.y0 - xt.y0)
@@ -333,18 +362,25 @@ class TranslateConverter(PDFConverterEx):
                             child.x0 < pstk[-1].x0 - 5.0 or line_vgap >= char_sz * 1.3 or (curr_text and curr_text[-1] in ".?!:;")
                         )
 
-                        # 检查上一行是否以介词、冠词、连词或属格 ('s) 结尾，或者当前行以小写字母开头（属于同一断句短语）
+                        # 检查上一行是否以介词、冠词、连词、关系代词或属格 ('s) 结尾，或者当前行以小写字母开头（属于同一断句短语）
                         is_continuation = (
                             curr_text.endswith("'s")
                             or curr_text.endswith("’s")
                             or last_word in {
                                 "a", "an", "the", "to", "of", "in", "for", "with", "on", "at",
-                                "from", "by", "and", "or", "nor", "but", "so", "yet", "as", "into"
+                                "from", "by", "and", "or", "nor", "but", "so", "yet", "as", "into",
+                                "that", "which", "who", "whom", "whose", "where", "when", "while"
                             }
                             or child.get_text().islower()
                         )
-                        if is_bullet_item or bullet_ended:
+
+                        # 检查上一行是否为目录项（标题后跟点/空格及页码）
+                        is_toc_prev = bool(re.search(r"(\.{2,}|[\ufffd]{2,}|\s{3,})\s*(\d+|[ivxlcdm]+)$", curr_text, re.IGNORECASE))
+
+                        if is_bullet_item or bullet_ended or is_toc_prev:
                             is_new_para = True
+                            if is_toc_prev and pstk:
+                                pstk[-1].is_toc_item = True
                         # 1. 明显的垂直行距 (>= 1.7 倍字号，例如目录、列表项、分段)
                         elif line_vgap >= char_sz * 1.7 and not is_continuation:
                             is_new_para = True
@@ -368,10 +404,22 @@ class TranslateConverter(PDFConverterEx):
                             pstk[-1].line_end_xs.append(xt.x1)
                     else:                           # 根据当前字符构建一个新的段落
                         sstk.append("")
-                        pstk.append(Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False))
+                        new_p = Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False)
+                        if not child.get_text().isspace():
+                            new_p.is_italic = ch_is_italic
+                            new_p.is_bold = ch_is_bold
+                            new_p.color = ch_color
+                        pstk.append(new_p)
                 if not cur_v:                                               # 文字入栈
                     ch_txt = child.get_text()
                     is_punc = ch_txt in "’'\"”‘.,:;!?-–— \t\r\n"
+                    if not is_punc and ch_txt != " ":
+                        if ch_is_italic:
+                            pstk[-1].is_italic = True
+                        if ch_is_bold:
+                            pstk[-1].is_bold = True
+                        if ch_color and pstk[-1].color is None:
+                            pstk[-1].color = ch_color
                     if (                                                    # 根据当前字符修正段落属性
                         (child.size > pstk[-1].size and not is_punc)        # 1. 当前字符比段落字体大且非标点符号
                         or len(sstk[-1].strip()) == 1                       # 2. 当前字符为段落第二个文字（考虑首字母放大的情况）
@@ -422,8 +470,21 @@ class TranslateConverter(PDFConverterEx):
             log.debug(f'< {l:.1f} {v[0].x0:.1f} {v[0].y0:.1f} {v[0].cid} {v[0].fontname} {len(varl[id])} > v{id} = {"".join([ch.get_text() for ch in v])}')
             vlen.append(l)
 
-        # Detect paragraph justification (căn đều hai bên) from original lines
-        for p in pstk:
+        # Post-process paragraphs: TOC item, center alignment, and justification
+        page_mid = ltpage.width / 2.0
+        for idx, p in enumerate(pstk):
+            s = sstk[idx].rstrip()
+            # TOC item detection fallback
+            if re.search(r"(\.{2,}|[\ufffd]{2,}|\s{3,})\s*(\d+|[ivxlcdm]+)$", s, re.IGNORECASE):
+                p.is_toc_item = True
+
+            # Center alignment detection:
+            # Paragraph midpoint is close to page center (within 35pt), and paragraph has significant margin on either side
+            p_mid = (p.x0 + p.x1) / 2.0
+            if abs(p_mid - page_mid) < 35.0 and (p.x0 > 40.0 and (ltpage.width - p.x1) > 40.0):
+                p.is_centered = True
+
+            # Detect paragraph justification (căn đều hai bên) from original lines
             line_w = p.x1 - p.x0
             if p.line_breaks >= 1 and line_w > 50 and len(p.line_end_xs) >= 1:
                 margin_tol = max(3.0 * p.size, line_w * 0.04)
@@ -455,16 +516,25 @@ class TranslateConverter(PDFConverterEx):
                         })
                 return s
             try:
-                # 保护列表项开头的 Bullet 符号（•, ▪, ▸ 等），防止翻译引擎篡改、重复或丢失
-                bullet_prefix = ""
-                m_bullet = re.match(r"^(\s*[•▪▸►○●■◆◇·–—]\s*)", s)
-                if m_bullet:
-                    bullet_prefix = m_bullet.group(1)
-                    s_to_trans = s[len(bullet_prefix):]
+                # 检查是否为 TOC 目录项：如果是，只翻译标题部分，保留页码和前缀
+                m_toc = re.match(r"^(.*?)([\.\s\ufffd]{2,})(\d+|[ivxlcdm]+)\s*$", s, re.IGNORECASE)
+                toc_page_suffix = ""
+                if m_toc:
+                    s_to_trans = m_toc.group(1).strip()
+                    toc_page_suffix = f" ... {m_toc.group(3).strip()}"
                 else:
                     s_to_trans = s
 
-                s_clean = s_to_trans.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\ufffd", "'")
+                # 保护列表项开头的 Bullet 符号（•, ▪, ▸ 等），防止翻译引擎篡改、重复或丢失
+                bullet_prefix = ""
+                m_bullet = re.match(r"^(\s*[•▪▸►○●■◆◇·–—]\s*)", s_to_trans)
+                if m_bullet:
+                    bullet_prefix = m_bullet.group(1)
+                    s_to_trans = s_to_trans[len(bullet_prefix):]
+
+                # 替换特殊引号并安全处理 \ufffd (多重 \ufffd 转为点，单 stray \ufffd 转为空格，绝不变为单引号)
+                s_clean = re.sub(r'[\ufffd]{2,}', '...', s_to_trans)
+                s_clean = s_clean.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\ufffd", " ")
                 if re.search(r'\b[A-Za-z]\s+[A-Za-z]\s+[A-Za-z]\b', s_clean):
                     chunks = re.split(r'(\{v\d+\}|\s{2,})', s_clean)
                     new_chunks = []
@@ -484,6 +554,8 @@ class TranslateConverter(PDFConverterEx):
                     new = unicodedata.normalize("NFC", new)
                 if bullet_prefix:
                     new = bullet_prefix + (new or "")
+                if toc_page_suffix:
+                    new = (new or "") + toc_page_suffix
                 with done_lock:
                     done_s += 1
                     if self.callback:
@@ -511,6 +583,10 @@ class TranslateConverter(PDFConverterEx):
         def raw_string(fcur: str, cstk: str):  # 编码字符串
             if fcur == self.noto_name:
                 return "".join(["%04x" % self.noto.has_glyph(ord(c)) for c in cstk])
+            elif fcur == getattr(self, "noto_italic_name", None) and self.noto_italic:
+                return "".join(["%04x" % self.noto_italic.has_glyph(ord(c)) for c in cstk])
+            elif fcur == getattr(self, "noto_bold_name", None) and self.noto_bold:
+                return "".join(["%04x" % self.noto_bold.has_glyph(ord(c)) for c in cstk])
             elif isinstance(self.fontmap[fcur], PDFCIDFont):  # 判断编码长度
                 return "".join(["%04x" % ord(c) for c in cstk])
             else:
@@ -532,10 +608,14 @@ class TranslateConverter(PDFConverterEx):
         def gen_op_line(x, y, xlen, ylen, linewidth):
             return f"ET q 1 0 0 1 {x:f} {y:f} cm [] 0 d 0 J {linewidth:f} w 0 0 m {xlen:f} {ylen:f} l S Q BT "
 
-        def get_char_info(ch: str, size: float):
+        def get_char_info(ch: str, size: float, is_italic: bool = False, is_bold: bool = False):
             fcur_ = None
             if self.translator.lang_out.lower() in ["vi", "vietnamese"]:
-                if self.noto and self.noto.has_glyph(ord(ch)):
+                if is_italic and self.noto_italic and self.noto_italic.has_glyph(ord(ch)):
+                    fcur_ = self.noto_italic_name
+                elif is_bold and self.noto_bold and self.noto_bold.has_glyph(ord(ch)):
+                    fcur_ = self.noto_bold_name
+                elif self.noto and self.noto.has_glyph(ord(ch)):
                     fcur_ = self.noto_name
             if fcur_ is None:
                 try:
@@ -544,9 +624,18 @@ class TranslateConverter(PDFConverterEx):
                 except Exception:
                     pass
             if fcur_ is None:
-                fcur_ = self.noto_name
+                if is_italic and self.noto_italic:
+                    fcur_ = self.noto_italic_name
+                elif is_bold and self.noto_bold:
+                    fcur_ = self.noto_bold_name
+                else:
+                    fcur_ = self.noto_name
             if fcur_ == self.noto_name:
                 adv = self.noto.char_lengths(ch, size)[0]
+            elif fcur_ == getattr(self, "noto_italic_name", None) and self.noto_italic:
+                adv = self.noto_italic.char_lengths(ch, size)[0]
+            elif fcur_ == getattr(self, "noto_bold_name", None) and self.noto_bold:
+                adv = self.noto_bold.char_lengths(ch, size)[0]
             else:
                 adv = self.fontmap[fcur_].char_width(ord(ch)) * size
             return fcur_, adv
@@ -563,7 +652,10 @@ class TranslateConverter(PDFConverterEx):
             page_right_margin = ltpage.width - max(36.0, p_obj.x0)
             p_x1 = max(p_obj.x1, page_right_margin)
             p_brk = p_obj.brk
-            
+            is_it = getattr(p_obj, "is_italic", False)
+            is_bd = getattr(p_obj, "is_bold", False)
+            p_col = getattr(p_obj, "color", None)
+
             # If paragraph starts with extreme offset (e.g. Part I), align to p_x0 to prevent asymmetric deformation
             if p_obj.x - p_obj.x0 > 2.5 * cur_size:
                 cur_x = p_obj.x0
@@ -580,13 +672,14 @@ class TranslateConverter(PDFConverterEx):
                 cur_chunk = ""
                 cur_tx = t_x
                 c_x = t_x
+                eff_color = color if color is not None else p_col
                 for c in w_str:
-                    f_, a_ = get_char_info(c, cur_size)
+                    f_, a_ = get_char_info(c, cur_size, is_italic=is_it, is_bold=is_bd)
                     if cur_f is None:
                         cur_f = f_
                         cur_chunk = c
                     elif f_ != cur_f:
-                        w_ = sum(get_char_info(ch, cur_size)[1] for ch in cur_chunk)
+                        w_ = sum(get_char_info(ch, cur_size, is_italic=is_it, is_bold=is_bd)[1] for ch in cur_chunk)
                         ops_vals.append({
                             "type": OpType.TEXT,
                             "font": cur_f,
@@ -597,7 +690,7 @@ class TranslateConverter(PDFConverterEx):
                             "lidx": l_idx,
                             "width": w_,
                             "word_id": w_id,
-                            "color": color,
+                            "color": eff_color,
                         })
                         cur_chunk = c
                         cur_f = f_
@@ -606,7 +699,7 @@ class TranslateConverter(PDFConverterEx):
                         cur_chunk += c
                     c_x += a_
                 if cur_chunk:
-                    w_ = sum(get_char_info(ch, cur_size)[1] for ch in cur_chunk)
+                    w_ = sum(get_char_info(ch, cur_size, is_italic=is_it, is_bold=is_bd)[1] for ch in cur_chunk)
                     ops_vals.append({
                         "type": OpType.TEXT,
                         "font": cur_f,
@@ -617,8 +710,57 @@ class TranslateConverter(PDFConverterEx):
                         "lidx": l_idx,
                         "width": w_,
                         "word_id": w_id,
-                        "color": color,
+                        "color": eff_color,
                     })
+
+            if getattr(p_obj, "is_toc_item", False):
+                # Dedicated clean formatting for Table of Contents items
+                full_text = "".join(tokens).strip()
+                m_t = re.match(r"^(.*?)(?:\s*\.{2,}|\s{2,}|\s*\u2026)\s*(\d+|[ivxlcdm]+)$", full_text, re.IGNORECASE)
+                if m_t:
+                    title_part = m_t.group(1).strip()
+                    page_num_part = m_t.group(2).strip()
+                    # Calculate page num width
+                    pg_advs = [get_char_info(c, cur_size, is_italic=is_it, is_bold=is_bd)[1] for c in page_num_part]
+                    pg_w = sum(pg_advs)
+                    pg_x = p_obj.x1 - pg_w
+
+                    # Lay out title words starting at p_obj.x0
+                    title_tokens = tokenize(title_part)
+                    cur_x = p_obj.x0
+                    w_id = 0
+                    for tok in title_tokens:
+                        if tok.isspace():
+                            _, adv = get_char_info(" ", cur_size, is_italic=is_it, is_bold=is_bd)
+                            cur_x += adv
+                            continue
+                        char_infos = [get_char_info(c, cur_size, is_italic=is_it, is_bold=is_bd) for c in tok]
+                        w_w = sum(adv for _, adv in char_infos)
+                        w_id += 1
+                        push_word_internal(tok, cur_x, 0, w_id, color=p_col)
+                        cur_x += w_w
+
+                    title_end_x = cur_x
+                    # Leader dots
+                    dot_f, dot_adv = get_char_info(".", cur_size, is_italic=is_it, is_bold=is_bd)
+                    dot_pitch = dot_adv * 1.8
+                    dot_start_x = title_end_x + dot_adv * 1.5
+                    dot_end_x = pg_x - dot_adv * 1.5
+
+                    dot_x = dot_start_x
+                    dot_count = 0
+                    while dot_x + dot_adv <= dot_end_x:
+                        dot_count += 1
+                        dot_x += dot_pitch
+                    if dot_count > 0:
+                        dot_x = dot_start_x
+                        for _ in range(dot_count):
+                            push_word_internal(".", dot_x, 0, 999, color=p_col)
+                            dot_x += dot_pitch
+
+                    # Right-aligned page number
+                    push_word_internal(page_num_part, pg_x, 0, 1000, color=p_col)
+                    return ops_vals, 0
 
             for tok in tokens:
                 vy_regex = re.match(r"\{\s*v([\d\s]+)\}", tok, re.IGNORECASE)
@@ -669,7 +811,7 @@ class TranslateConverter(PDFConverterEx):
                 if tok.isspace():
                     if cur_x <= p_x0 + 0.1 * cur_size:
                         continue
-                    _, adv = get_char_info(" ", cur_size)
+                    _, adv = get_char_info(" ", cur_size, is_italic=is_it, is_bold=is_bd)
                     should_wrap_sp = (
                         (p_brk and cur_x + adv > p_x1 + 0.1 * cur_size)
                         or (cur_x + adv > ltpage.width - 25.0)
@@ -684,9 +826,9 @@ class TranslateConverter(PDFConverterEx):
 
                 # Normal word token
                 is_url_tok = bool(re.search(r"^(https?://|www\.)", tok))
-                tok_color = (0.0, 0.2, 0.85) if is_url_tok else None
+                tok_color = (0.0, 0.2, 0.85) if is_url_tok else p_col
 
-                char_infos = [get_char_info(c, cur_size) for c in tok]
+                char_infos = [get_char_info(c, cur_size, is_italic=is_it, is_bold=is_bd) for c in tok]
                 word_width = sum(adv for _, adv in char_infos)
 
                 should_wrap_w = (
@@ -767,6 +909,21 @@ class TranslateConverter(PDFConverterEx):
                             for idx_w, grp in enumerate(word_groups):
                                 for v in grp:
                                     v["x"] += idx_w * gap_add
+
+            # 3.5 Apply horizontal centering if original was centered
+            if p.is_centered and ops_vals:
+                page_center = ltpage.width / 2.0
+                max_lidx = max(v.get("lidx", 0) for v in ops_vals)
+                for l in range(max_lidx + 1):
+                    line_ops = [v for v in ops_vals if v.get("lidx") == l and v.get("type") == OpType.TEXT]
+                    if line_ops:
+                        line_min_x = min(v["x"] for v in line_ops)
+                        line_max_x = max(v["x"] + v.get("width", 0) for v in line_ops)
+                        line_w = line_max_x - line_min_x
+                        desired_x0 = page_center - (line_w / 2.0)
+                        shift = desired_x0 - line_min_x
+                        for v in line_ops:
+                            v["x"] += shift
 
             # 4. Adaptive line height
             line_height = default_line_height
