@@ -75,6 +75,7 @@ const LANGUAGES = [
 
 const DEFAULT_SERVICES = [
   { id: "google", name: "Google Translate", desc: "Miễn phí, tốc độ cao, không cần API Key", badge: "Khuyên dùng" },
+  { id: "marian", name: "MarianMT AI (Local Offline)", desc: "Mô hình dịch AI Helsinki-NLP siêu nhỏ gọn, chạy offline 100% trên máy", badge: "Local AI" },
   { id: "bing", name: "Bing Translate", desc: "Dịch vụ dịch thuật miễn phí từ Microsoft", badge: "Miễn phí" },
   { id: "openai:gpt-4o-mini", name: "OpenAI GPT-4o-mini", desc: "Dịch AI thông minh, cần OpenAI API Key", badge: "AI LLM" },
   { id: "deepseek:deepseek-chat", name: "DeepSeek-V3", desc: "Dịch tài liệu học thuật rất tốt, giá rẻ", badge: "AI LLM" },
@@ -581,8 +582,8 @@ export default function App() {
                 onChange={(e) => setService(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500 font-medium"
               >
-                <optgroup label="✨ Miễn phí (Mặc định)">
-                  {DEFAULT_SERVICES.slice(0, 2).map((s) => (
+                <optgroup label="✨ Miễn phí & Offline">
+                  {DEFAULT_SERVICES.slice(0, 3).map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name} [{s.badge}] - {s.desc}
                     </option>
@@ -590,7 +591,7 @@ export default function App() {
                 </optgroup>
 
                 <optgroup label="🤖 AI LLM Model">
-                  {DEFAULT_SERVICES.slice(2).map((s) => (
+                  {DEFAULT_SERVICES.slice(3).map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name} [{s.badge}] - {s.desc}
                     </option>

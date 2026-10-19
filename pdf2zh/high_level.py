@@ -185,7 +185,35 @@ def translate_patch(
             box = np.ones((pix.height, pix.width))
             h, w = box.shape
             vcls = ["abandon", "figure", "table", "isolate_formula", "formula_caption"]
+            raw_boxes = [d.xyxy.squeeze().tolist() for d in page_layout.boxes]
+            valid_box_indices = []
             for i, d in enumerate(page_layout.boxes):
+                if page_layout.names[int(d.cls)] in vcls:
+                    valid_box_indices.append(i)
+                    continue
+                bi = raw_boxes[i]
+                area_i = max(1.0, (bi[2] - bi[0]) * (bi[3] - bi[1]))
+                is_contained = False
+                for j, dj in enumerate(page_layout.boxes):
+                    if i == j or page_layout.names[int(dj.cls)] in vcls:
+                        continue
+                    bj = raw_boxes[j]
+                    area_j = max(1.0, (bj[2] - bj[0]) * (bj[3] - bj[1]))
+                    if area_j > area_i:
+                        ix0 = max(bi[0], bj[0])
+                        iy0 = max(bi[1], bj[1])
+                        ix1 = min(bi[2], bj[2])
+                        iy1 = min(bi[3], bj[3])
+                        if ix1 > ix0 and iy1 > iy0:
+                            inter = (ix1 - ix0) * (iy1 - iy0)
+                            if inter / area_i > 0.80:
+                                is_contained = True
+                                break
+                if not is_contained:
+                    valid_box_indices.append(i)
+
+            for i in valid_box_indices:
+                d = page_layout.boxes[i]
                 if page_layout.names[int(d.cls)] not in vcls:
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     x0, y0, x1, y1 = (
@@ -195,7 +223,8 @@ def translate_patch(
                         np.clip(int(h - y0 + 1), 0, h - 1),
                     )
                     box[y0:y1, x0:x1] = i + 2
-            for i, d in enumerate(page_layout.boxes):
+            for i in valid_box_indices:
+                d = page_layout.boxes[i]
                 if page_layout.names[int(d.cls)] in vcls:
                     x0, y0, x1, y1 = d.xyxy.squeeze()
                     x0, y0, x1, y1 = (
@@ -358,28 +387,53 @@ def preprocess_scanned_pdf(
             scale_x = page.rect.width / pix.width
             scale_y = page.rect.height / pix.height
 
-            # Pass 1: White-out the original text regions
+            # Parse OCR items with coordinates
+            items = []
             for box, text, score in ocr_res:
-                if not text or not text.strip() or score < 0.4:
-                    continue
-                xs = [page.rect.x0 + pt[0] * scale_x for pt in box]
-                ys = [page.rect.y0 + pt[1] * scale_y for pt in box]
-                rect = fitz.Rect(min(xs) - 1.5, min(ys) - 1.5, max(xs) + 1.5, max(ys) + 1.5)
-                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
-
-            # Pass 2: Inject text at baseline
-            for box, text, score in ocr_res:
-                clean_text = text.strip()
+                clean_text = text.strip() if text else ""
                 if not clean_text or score < 0.4:
                     continue
                 xs = [page.rect.x0 + pt[0] * scale_x for pt in box]
                 ys = [page.rect.y0 + pt[1] * scale_y for pt in box]
-                h = max(ys) - min(ys)
-                font_size = max(7.0, min(24.0, h * 0.75))
-                baseline_pt = fitz.Point(min(xs), max(ys) - h * 0.15)
-                page.insert_text(baseline_pt, clean_text, fontsize=font_size, fontname="helv")
+                items.append({
+                    "text": clean_text,
+                    "x0": min(xs), "x1": max(xs),
+                    "y0": min(ys), "y1": max(ys),
+                    "h": max(ys) - min(ys),
+                })
 
-            logger.info(f"Đã OCR và chèn {len(ocr_res)} khối chữ vào trang {p_idx + 1}")
+            # Group adjacent lines into cohesive paragraphs / titles
+            groups = []
+            for item in items:
+                if not groups:
+                    groups.append([item])
+                else:
+                    prev = groups[-1][-1]
+                    vgap = item["y0"] - prev["y1"]
+                    h_overlap = max(0, min(item["x1"], prev["x1"]) - max(item["x0"], prev["x0"]))
+                    if vgap >= -5 and vgap <= prev["h"] * 0.85 and (h_overlap > 0 or abs(item["x0"] - prev["x0"]) < 35):
+                        groups[-1].append(item)
+                    else:
+                        groups.append([item])
+
+            # Pass 1: White-out the grouped text regions as coherent blocks
+            for g in groups:
+                min_x = min(it["x0"] for it in g)
+                max_x = max(it["x1"] for it in g)
+                min_y = min(it["y0"] for it in g)
+                max_y = max(it["y1"] for it in g)
+                rect = fitz.Rect(min_x - 2.0, min_y - 2.0, max_x + 2.0, max_y + 2.0)
+                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
+
+            # Pass 2: Inject text at baseline
+            for g in groups:
+                for item in g:
+                    h = item["h"]
+                    font_size = max(7.0, min(72.0, h * 0.78))
+                    baseline_pt = fitz.Point(item["x0"], item["y1"] - h * 0.15)
+                    page.insert_text(baseline_pt, item["text"], fontsize=font_size, fontname="helv")
+
+            logger.info(f"Đã OCR và chèn {len(items)} dòng chữ ({len(groups)} nhóm) vào trang {p_idx + 1}")
         except Exception as e:
             logger.error(f"Lỗi khi OCR trang {p_idx + 1}: {e}", exc_info=True)
 
@@ -407,6 +461,12 @@ def translate_stream(
     ignore_cache: bool = False,
     **kwarg: Any,
 ):
+    if model is None:
+        from pdf2zh.doclayout import ModelInstance, OnnxModel
+        if ModelInstance.value is None:
+            ModelInstance.value = OnnxModel.load_available()
+        model = ModelInstance.value
+
     font_list = [("tiro", None)]
 
     font_path = download_remote_fonts(lang_out.lower())
@@ -566,6 +626,12 @@ def translate(
     export_format: str = "both",
     **kwarg: Any,
 ):
+    if model is None:
+        from pdf2zh.doclayout import ModelInstance, OnnxModel
+        if ModelInstance.value is None:
+            ModelInstance.value = OnnxModel.load_available()
+        model = ModelInstance.value
+
     if not files:
         raise PDFValueError("No files to process.")
 

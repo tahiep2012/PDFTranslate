@@ -177,16 +177,40 @@ class GoogleTranslator(BaseTranslator):
 
     def do_translate(self, text):
         text = text[:5000]  # google translate max length
+        # Priority 1: Google's official translate_a API (extremely fast, robust, no 429 IP block)
+        try:
+            gtx_url = "https://translate.googleapis.com/translate_a/single"
+            params = {
+                "client": "gtx",
+                "sl": self.lang_in,
+                "tl": self.lang_out,
+                "dt": "t",
+                "q": text,
+            }
+            resp = self.session.get(gtx_url, params=params, timeout=12)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                    translated = "".join(seg[0] for seg in data[0] if seg and len(seg) > 0 and seg[0])
+                    if translated:
+                        return remove_control_characters(translated)
+        except Exception as e:
+            logger.debug(f"Google gtx API failed, falling back to /m endpoint: {e}")
+
+        # Priority 2: Fallback to old web scraping endpoint
         response = self.session.get(
             self.endpoint,
             params={"tl": self.lang_out, "sl": self.lang_in, "q": text},
             headers=self.headers,
+            timeout=15,
         )
         re_result = re.findall(
             r'(?s)class="(?:t0|result-container)">(.*?)<', response.text
         )
         if response.status_code == 400:
             result = "IRREPARABLE TRANSLATION ERROR"
+        elif response.status_code == 429:
+            raise requests.exceptions.RequestException("Google Translate Rate Limited (429)")
         else:
             response.raise_for_status()
             result = html.unescape(re_result[0])
@@ -937,6 +961,62 @@ class ArgosTranslator(BaseTranslator):
         translation = from_lang.get_translation(to_lang)
         translatedText = translation.translate(text)
         return translatedText
+
+
+class MarianTranslator(BaseTranslator):
+    name = "marian"
+    _cached_models = {}
+
+    def __init__(self, lang_in, lang_out, model=None, ignore_cache=False, **kwargs):
+        super().__init__(lang_in, lang_out, model, ignore_cache)
+        self.lang_in = lang_in.lower()
+        self.lang_out = lang_out.lower()
+
+        # Resolve model name
+        if model:
+            self.model_name = model
+        else:
+            # Automatic mapping for Helsinki-NLP models
+            if self.lang_in == "en" and self.lang_out in ["vi", "vietnamese"]:
+                self.model_name = "Helsinki-NLP/opus-mt-en-vi"
+            elif self.lang_in == "en" and self.lang_out in ["zh", "chinese"]:
+                self.model_name = "Helsinki-NLP/opus-mt-en-zh"
+            elif self.lang_in in ["zh", "chinese"] and self.lang_out in ["vi", "vietnamese"]:
+                self.model_name = "Helsinki-NLP/opus-mt-zh-vi"
+            else:
+                self.model_name = f"Helsinki-NLP/opus-mt-{self.lang_in}-{self.lang_out}"
+
+        self._ensure_loaded()
+
+    def _ensure_loaded(self):
+        if self.model_name in MarianTranslator._cached_models:
+            self.tokenizer, self.model = MarianTranslator._cached_models[self.model_name]
+            return
+
+        try:
+            from transformers import MarianMTModel, MarianTokenizer
+            import torch
+        except ImportError:
+            raise ImportError("Vui lòng cài đặt: pip install transformers sentencepiece torch")
+
+        logger.info(f"Loading local MarianMT model: {self.model_name}...")
+        tokenizer = MarianTokenizer.from_pretrained(self.model_name)
+        model = MarianMTModel.from_pretrained(self.model_name)
+        model.eval()
+        MarianTranslator._cached_models[self.model_name] = (tokenizer, model)
+        self.tokenizer = tokenizer
+        self.model = model
+
+    def do_translate(self, text: str) -> str:
+        import torch
+        if not text or not text.strip():
+            return text
+
+        inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        with torch.no_grad():
+            translated = self.model.generate(**inputs, max_length=512, num_beams=3)
+        res = self.tokenizer.decode(translated[0], skip_special_tokens=True)
+        return remove_control_characters(res)
 
 
 class GrokTranslator(OpenAITranslator):

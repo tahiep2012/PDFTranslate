@@ -14,6 +14,33 @@ import unicodedata
 from pathlib import Path
 from string import Template
 
+# ── Windows DLL search path fix (Python 3.8+) ───────────────────────────────
+# Python 3.8+ changed DLL loading to only search trusted directories.
+# We register .venv/Scripts and onnxruntime/capi, and explicitly preload runtime DLLs
+# so onnxruntime and other C++ extensions load without requiring admin VC++ Redist installation.
+if sys.platform == "win32":
+    import ctypes
+    _py_scripts = Path(sys.executable).parent
+    _ort_capi = _py_scripts.parent / "Lib" / "site-packages" / "onnxruntime" / "capi"
+    _mupdf_dir = _py_scripts.parent / "Lib" / "site-packages" / "pymupdf"
+    if hasattr(os, "add_dll_directory"):
+        if _py_scripts.is_dir():
+            os.add_dll_directory(str(_py_scripts))
+        if _ort_capi.is_dir():
+            os.add_dll_directory(str(_ort_capi))
+        if _mupdf_dir.is_dir():
+            os.add_dll_directory(str(_mupdf_dir))
+
+    for _d in [_ort_capi, _py_scripts, _mupdf_dir]:
+        for _dll in ["VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "MSVCP140.dll", "MSVCP140_1.dll"]:
+            _target = _d / _dll
+            if _target.exists():
+                ctypes.windll.kernel32.LoadLibraryW(str(_target))
+    _ort_dll = _ort_capi / "onnxruntime.dll"
+    if _ort_dll.exists():
+        ctypes.windll.kernel32.LoadLibraryW(str(_ort_dll))
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Reconfigure all I/O streams to UTF-8 unbuffered
 os.environ["PYTHONIOENCODING"] = "utf-8"
 os.environ["PYTHONUTF8"] = "1"

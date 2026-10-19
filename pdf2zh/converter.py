@@ -42,6 +42,7 @@ from pdf2zh.translator import (
     XinferenceTranslator,
     ZhipuTranslator,
     X302AITranslator,
+    MarianTranslator,
 )
 
 log = logging.getLogger(__name__)
@@ -168,7 +169,7 @@ class TranslateConverter(PDFConverterEx):
         if not envs:
             envs = {}
         for translator in [GoogleTranslator, BingTranslator, DeepLTranslator, DeepLXTranslator, OllamaTranslator, XinferenceTranslator, AzureOpenAITranslator,
-                           OpenAITranslator, ZhipuTranslator, ModelScopeTranslator, SiliconTranslator, GeminiTranslator, AzureTranslator, TencentTranslator, DifyTranslator, AnythingLLMTranslator, ArgosTranslator, GrokTranslator, GroqTranslator, DeepseekTranslator, MiniMaxTranslator, OpenAIlikedTranslator, QwenMtTranslator, X302AITranslator]:
+                           OpenAITranslator, ZhipuTranslator, ModelScopeTranslator, SiliconTranslator, GeminiTranslator, AzureTranslator, TencentTranslator, DifyTranslator, AnythingLLMTranslator, ArgosTranslator, GrokTranslator, GroqTranslator, DeepseekTranslator, MiniMaxTranslator, OpenAIlikedTranslator, QwenMtTranslator, X302AITranslator, MarianTranslator]:
             if service_name == translator.name:
                 self.translator = translator(lang_in, lang_out, service_model, envs=envs, prompt=prompt, ignore_cache=ignore_cache)
         if not self.translator:
@@ -246,9 +247,15 @@ class TranslateConverter(PDFConverterEx):
                 if child.get_text() == "•":
                     cls = 0
                 # 判定当前字符是否属于公式
+                is_subscript = (
+                    cls == xt_cls
+                    and len(sstk[-1].strip()) > 1
+                    and child.size < pstk[-1].size * 0.79
+                    and (xt is not None and abs(child.y0 - xt.y0) > child.size * 0.15)
+                )
                 if (                                                                                        # 判定当前字符是否属于公式
                     cls == 0                                                                                # 1. 类别为保留区域
-                    or (cls == xt_cls and len(sstk[-1].strip()) > 1 and child.size < pstk[-1].size * 0.79)  # 2. 角标字体，有 0.76 的角标和 0.799 的大写，这里用 0.79 取中，同时考虑首字母放大的情况
+                    or is_subscript                                                                         # 2. 角标字体（且存在基线偏移）
                     or vflag(child.fontname, child.get_text())                                              # 3. 公式字体
                     or (child.matrix[0] == 0 and child.matrix[3] == 0)                                      # 4. 垂直字体
                 ):
@@ -288,11 +295,43 @@ class TranslateConverter(PDFConverterEx):
                         vfix = 0
                 # 当前字符不属于公式或当前字符是公式的第一个字符
                 if not vstk:
-                    if cls == xt_cls:               # 当前字符与前一个字符属于同一段落
-                        if child.x0 > xt.x1 + 1:    # 添加行内空格
-                            sstk[-1] += " "
+                    is_new_para = False
+                    if cls != xt_cls:
+                        is_new_para = True
+                    elif xt is not None and child.x1 < xt.x0:  # 换行
+                        line_vgap = abs(child.y0 - xt.y0)
+                        char_sz = max(child.size, xt.size)
+                        curr_text = sstk[-1].rstrip()
+                        words = curr_text.split()
+                        last_word = words[-1].lower() if words else ""
+                        # 检查上一行是否以介词、冠词、连词或属格 ('s) 结尾，或者当前行以小写字母开头（属于同一断句短语）
+                        is_continuation = (
+                            curr_text.endswith("'s")
+                            or curr_text.endswith("’s")
+                            or last_word in {
+                                "a", "an", "the", "to", "of", "in", "for", "with", "on", "at",
+                                "from", "by", "and", "or", "nor", "but", "so", "yet", "as", "into"
+                            }
+                            or child.get_text().islower()
+                        )
+                        # 1. 明显的垂直行距 (>= 1.7 倍字号，例如目录、列表项、分段)
+                        if line_vgap >= char_sz * 1.7 and not is_continuation:
+                            is_new_para = True
+                        # 2. 前一行提前结束（留白较多）且垂直行距 >= 1.2 倍字号，或前一行以标点结尾
+                        elif line_vgap >= char_sz * 1.2 and not is_continuation:
+                            if curr_text and curr_text[-1] in ".?!:;":
+                                is_new_para = True
+                            elif xt.x1 < (ltpage.width - 72.0) and (xt.x1 - pstk[-1].x0 < 0.75 * (ltpage.width - 2 * 36.0)):
+                                is_new_para = True
+
+                    if not is_new_para:               # 当前字符与前一个字符属于同一段落
+                        space_threshold = max(2.0, max(child.size, xt.size) * 0.22)
+                        if child.x0 > xt.x1 + space_threshold:    # 添加行内空格
+                            if sstk and not sstk[-1].endswith(" ") and child.get_text() != " ":
+                                sstk[-1] += " "
                         elif child.x1 < xt.x0:      # 添加换行空格并标记原文段落存在换行
-                            sstk[-1] += " "
+                            if sstk and not sstk[-1].endswith(" ") and child.get_text() != " ":
+                                sstk[-1] += " "
                             pstk[-1].brk = True
                             pstk[-1].line_breaks += 1
                             pstk[-1].line_end_xs.append(xt.x1)
@@ -300,13 +339,15 @@ class TranslateConverter(PDFConverterEx):
                         sstk.append("")
                         pstk.append(Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False))
                 if not cur_v:                                               # 文字入栈
+                    ch_txt = child.get_text()
+                    is_punc = ch_txt in "’'\"”‘.,:;!?-–— \t\r\n"
                     if (                                                    # 根据当前字符修正段落属性
-                        child.size > pstk[-1].size                          # 1. 当前字符比段落字体大
+                        (child.size > pstk[-1].size and not is_punc)        # 1. 当前字符比段落字体大且非标点符号
                         or len(sstk[-1].strip()) == 1                       # 2. 当前字符为段落第二个文字（考虑首字母放大的情况）
-                    ) and child.get_text() != " ":                          # 3. 当前字符不是空格
+                    ) and ch_txt != " ":                                    # 3. 当前字符不是空格
                         pstk[-1].y -= child.size - pstk[-1].size            # 修正段落初始纵坐标，假设两个不同大小字符的上边界对齐
                         pstk[-1].size = child.size
-                    sstk[-1] += child.get_text()
+                    sstk[-1] += ch_txt
                 else:                                                       # 公式入栈
                     if (                                                    # 根据公式左侧的文字修正公式的纵向偏移
                         not vstk                                            # 1. 当前字符是公式的第一个字符
@@ -383,7 +424,22 @@ class TranslateConverter(PDFConverterEx):
                         })
                 return s
             try:
-                new = self.translator.translate(s)
+                s_clean = s.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\ufffd", "'")
+                if re.search(r'\b[A-Za-z]\s+[A-Za-z]\s+[A-Za-z]\b', s_clean):
+                    chunks = re.split(r'(\{v\d+\}|\s{2,})', s_clean)
+                    new_chunks = []
+                    for chunk in chunks:
+                        if chunk.startswith('{v') or (chunk.startswith(' ') and len(chunk) >= 2):
+                            new_chunks.append(chunk)
+                        else:
+                            tokens = chunk.strip().split(' ')
+                            if len(tokens) >= 2 and all(len(t) == 1 or t in ("'s", "'t", "'d", "'m", "'re", "'ve", "'ll") for t in tokens):
+                                new_chunks.append("".join(tokens))
+                            else:
+                                new_chunks.append(chunk)
+                    s_clean = re.sub(r'[ \t]{2,}', ' ', "".join(new_chunks)).strip()
+
+                new = self.translator.translate(s_clean)
                 if new:
                     new = unicodedata.normalize("NFC", new)
                 with done_lock:
