@@ -136,6 +136,9 @@ class Paragraph:
         self.is_italic: bool = False
         self.is_bold: bool = False
         self.color = None
+        self.sample_color = None
+        self.colored_char_count: int = 0
+        self.total_char_count: int = 0
 
 
 # fmt: off
@@ -343,8 +346,7 @@ class TranslateConverter(PDFConverterEx):
                 if not vstk:
                     is_new_para = False
                     if cls != xt_cls:
-                        if not child.get_text().isspace():
-                            is_new_para = True
+                        is_new_para = True
                     elif xt is not None and child.x1 < xt.x0:  # 换行
                         BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·", "–", "—"}
                         line_vgap = abs(child.y0 - xt.y0)
@@ -353,14 +355,13 @@ class TranslateConverter(PDFConverterEx):
                         words = curr_text.split()
                         last_word = words[-1].lower() if words else ""
 
-                        # 检查当前行是否为列表项 (Bullet Point)
-                        is_bullet_item = child.get_text() in BULLET_CHARS
-
-                        # 检查上一段是否为列表项，而当前行不是列表项（列表结束，正文开始）
-                        was_bullet_prev = any(curr_text.lstrip().startswith(b) for b in BULLET_CHARS)
-                        bullet_ended = was_bullet_prev and not is_bullet_item and (
-                            child.x0 < pstk[-1].x0 - 5.0 or line_vgap >= char_sz * 1.3 or (curr_text and curr_text[-1] in ".?!:;")
-                        )
+                        xt_font = getattr(xt, "fontname", "")
+                        if isinstance(xt_font, bytes):
+                            try:
+                                xt_font = xt_font.decode("utf-8")
+                            except Exception:
+                                xt_font = ""
+                        xt_is_bold = bool(re.search(r"(bold|black|heavy)", xt_font, re.IGNORECASE))
 
                         # 检查上一行是否以介词、冠词、连词、关系代词或属格 ('s) 结尾，或者当前行以小写字母开头（属于同一断句短语）
                         is_continuation = (
@@ -374,10 +375,33 @@ class TranslateConverter(PDFConverterEx):
                             or child.get_text().islower()
                         )
 
+                        # Font size difference across line break (e.g. heading starting or heading ending into body text)
+                        is_size_change = abs(child.size - xt.size) >= 1.5 or (pstk and abs(child.size - pstk[-1].size) >= 1.5)
+
+                        # Font weight change across line break (e.g. regular text ending, bold heading starting)
+                        is_weight_change = (
+                            (ch_is_bold != xt_is_bold)
+                            and (line_vgap >= min(child.size, xt.size) * 0.7 or (curr_text and curr_text[-1] in ".?!:;"))
+                            and not is_continuation
+                        )
+
+                        # 检查当前行是否为列表项 (Bullet Point)
+                        is_bullet_item = child.get_text() in BULLET_CHARS
+
+                        # 检查上一段是否为列表项，而当前行不是列表项（列表结束，正文开始或标题开始）
+                        was_bullet_prev = any(curr_text.lstrip().startswith(b) for b in BULLET_CHARS)
+                        bullet_ended = was_bullet_prev and not is_bullet_item and (
+                            is_size_change
+                            or is_weight_change
+                            or (curr_text and curr_text[-1] in ".?!:;")
+                            or child.x0 < pstk[-1].x0 - 2.0
+                            or line_vgap >= char_sz * 1.1
+                        )
+
                         # 检查上一行是否为目录项（标题后跟点/空格及页码）
                         is_toc_prev = bool(re.search(r"(\.{2,}|[\ufffd]{2,}|\s{3,})\s*(\d+|[ivxlcdm]+)$", curr_text, re.IGNORECASE))
 
-                        if is_bullet_item or bullet_ended or is_toc_prev:
+                        if is_bullet_item or bullet_ended or is_toc_prev or is_size_change or is_weight_change:
                             is_new_para = True
                             if is_toc_prev and pstk:
                                 pstk[-1].is_toc_item = True
@@ -408,7 +432,10 @@ class TranslateConverter(PDFConverterEx):
                         if not child.get_text().isspace():
                             new_p.is_italic = ch_is_italic
                             new_p.is_bold = ch_is_bold
-                            new_p.color = ch_color
+                            if ch_color:
+                                new_p.sample_color = ch_color
+                                new_p.colored_char_count += 1
+                            new_p.total_char_count += 1
                         pstk.append(new_p)
                 if not cur_v:                                               # 文字入栈
                     ch_txt = child.get_text()
@@ -418,10 +445,12 @@ class TranslateConverter(PDFConverterEx):
                             pstk[-1].is_italic = True
                         if ch_is_bold:
                             pstk[-1].is_bold = True
-                        if ch_color and pstk[-1].color is None:
-                            pstk[-1].color = ch_color
+                        if ch_color:
+                            pstk[-1].sample_color = ch_color
+                            pstk[-1].colored_char_count += 1
+                        pstk[-1].total_char_count += 1
                     if (                                                    # 根据当前字符修正段落属性
-                        (child.size > pstk[-1].size and not is_punc)        # 1. 当前字符比段落字体大且非标点符号
+                        (child.size > pstk[-1].size and not is_punc and len(sstk[-1].strip()) <= 2)  # 1. 仅在段落开头允许首字放大
                         or len(sstk[-1].strip()) == 1                       # 2. 当前字符为段落第二个文字（考虑首字母放大的情况）
                     ) and ch_txt != " ":                                    # 3. 当前字符不是空格
                         pstk[-1].y -= child.size - pstk[-1].size            # 修正段落初始纵坐标，假设两个不同大小字符的上边界对齐
@@ -470,18 +499,35 @@ class TranslateConverter(PDFConverterEx):
             log.debug(f'< {l:.1f} {v[0].x0:.1f} {v[0].y0:.1f} {v[0].cid} {v[0].fontname} {len(varl[id])} > v{id} = {"".join([ch.get_text() for ch in v])}')
             vlen.append(l)
 
-        # Post-process paragraphs: TOC item, center alignment, and justification
+        # Post-process paragraphs: TOC item, center alignment, color thresholding, and justification
         page_mid = ltpage.width / 2.0
+        BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·", "–", "—"}
         for idx, p in enumerate(pstk):
             s = sstk[idx].rstrip()
             # TOC item detection fallback
             if re.search(r"(\.{2,}|[\ufffd]{2,}|\s{3,})\s*(\d+|[ivxlcdm]+)$", s, re.IGNORECASE):
                 p.is_toc_item = True
 
+            # Color thresholding: only preserve color if at least 50% of characters are colored
+            if p.total_char_count > 0 and (p.colored_char_count / p.total_char_count) >= 0.5:
+                p.color = p.sample_color
+            else:
+                p.color = None
+
             # Center alignment detection:
-            # Paragraph midpoint is close to page center (within 35pt), and paragraph has significant margin on either side
+            # Paragraph midpoint is close to page center (within 25pt), margins are balanced, and paragraph is NOT a bullet point
+            is_bullet_p = any(s.lstrip().startswith(b) for b in BULLET_CHARS)
+            left_m = p.x0
+            right_m = ltpage.width - p.x1
+            is_balanced = abs(left_m - right_m) < 25.0
             p_mid = (p.x0 + p.x1) / 2.0
-            if abs(p_mid - page_mid) < 35.0 and (p.x0 > 40.0 and (ltpage.width - p.x1) > 40.0):
+            if (
+                not is_bullet_p
+                and is_balanced
+                and abs(p_mid - page_mid) < 25.0
+                and left_m > 40.0
+                and right_m > 40.0
+            ):
                 p.is_centered = True
 
             # Detect paragraph justification (căn đều hai bên) from original lines
@@ -983,7 +1029,7 @@ class TranslateConverter(PDFConverterEx):
 
         for l in lstk:  # 排版全局线条
             if l.linewidth < 5:  # hack 有的文档会用粗线条当图片背景
-                ops_list.append(gen_op_line(l.pts[0][0], l.pts[0][1], l.pts[1][0] - l.pts[0][0], l.pts[1][1] - l.pts[0][0], l.linewidth))
+                ops_list.append(gen_op_line(l.pts[0][0], l.pts[0][1], l.pts[1][0] - l.pts[0][0], l.pts[1][1] - l.pts[0][1], l.linewidth))
 
         # Collect structured page data for DOCX export
         page_doc_paragraphs = []
