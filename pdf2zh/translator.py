@@ -100,7 +100,8 @@ class BaseTranslator:
                 return cache
 
         translation = self.do_translate(text)
-        self.cache.set(text, translation)
+        if translation and not (translation == text and re.search(r"[A-Za-z]{3,}", text)):
+            self.cache.set(text, translation)
         return translation
 
     def do_translate(self, text: str) -> str:
@@ -205,7 +206,33 @@ class GoogleTranslator(BaseTranslator):
                 logger.debug(f"Google client {client} failed: {e}")
                 continue
 
-        # Priority 2: Fallback to Bing Translator if Google clients encounter rate limits
+        # Priority 2: Direct urllib fallback (bypasses broken local proxies and environment interference)
+        import urllib.request
+        import urllib.parse
+        for client in ["gtx", "tw-ob", "dict-chrome-ex"]:
+            try:
+                q = urllib.parse.quote(text)
+                gtx_url = f"https://translate.googleapis.com/translate_a/single?client={client}&sl={self.lang_in}&tl={self.lang_out}&dt=t&q={q}"
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                req = urllib.request.Request(
+                    gtx_url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                        "Accept": "*/*",
+                    }
+                )
+                with opener.open(req, timeout=10) as res:
+                    if res.status == 200:
+                        data = json.loads(res.read().decode("utf-8"))
+                        if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                            translated = "".join(seg[0] for seg in data[0] if seg and len(seg) > 0 and seg[0])
+                            if translated:
+                                return remove_control_characters(translated)
+            except Exception as e:
+                logger.debug(f"Direct Google urllib client {client} failed: {e}")
+                continue
+
+        # Priority 3: Fallback to Bing Translator if Google clients encounter rate limits
         try:
             if self._bing_fallback is None:
                 bing_cls = globals().get("BingTranslator")

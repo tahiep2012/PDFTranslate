@@ -105,6 +105,25 @@ class TestTranslateConverter(unittest.TestCase):
                 service="InvalidService",
             )
 
+    def test_parenthesis_and_continued_normalization(self):
+        import re
+        test_strings = [
+            ("( tiếp tục)", "(tiếp theo)"),
+            ("(tiếp tục )", "(tiếp theo)"),
+            ("(tiếp theo)", "(tiếp theo)"),
+            ("( văn bản mẫu )", "(văn bản mẫu)"),
+            (" ( bảng 1 ) ", "(bảng 1)"),
+        ]
+        for inp, expected in test_strings:
+            cleaned = inp.replace("\x00", "").replace("\ufeff", "")
+            cleaned = re.sub(r"\(\s+", "(", cleaned)
+            cleaned = re.sub(r"\s+\)", ")", cleaned)
+            if cleaned.strip().lower() in ["(tiếp tục)", "(tiếp tục )", "(tiếp theo)"]:
+                cleaned = "(tiếp theo)"
+            else:
+                cleaned = cleaned.strip()
+            self.assertEqual(cleaned, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

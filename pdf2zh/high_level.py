@@ -188,7 +188,7 @@ def translate_patch(
             # kdtree 是不可能 kdtree 的，不如直接渲染成图片，用空间换时间
             box = np.ones((pix.height, pix.width))
             h, w = box.shape
-            vcls = ["figure", "table", "isolate_formula", "formula_caption"]
+            vcls = ["figure", "isolate_formula", "formula_caption"]
             raw_boxes = [d.xyxy.squeeze().tolist() for d in page_layout.boxes]
             valid_box_indices = []
             for i, d in enumerate(page_layout.boxes):
@@ -238,6 +238,17 @@ def translate_patch(
                         np.clip(int(h - y0 + 1), 0, h - 1),
                     )
                     box[y0:y1, x0:x1] = 0
+
+            # Track which box IDs are tables for column-gap awareness
+            t_boxes = set()
+            for i in valid_box_indices:
+                if page_layout.names[int(page_layout.boxes[i].cls)] == "table":
+                    t_boxes.add(i + 2)
+            if hasattr(device, "table_boxes"):
+                device.table_boxes[page.pageno] = t_boxes
+            else:
+                device.table_boxes = {page.pageno: t_boxes}
+
             layout[page.pageno] = box
             # 新建一个 xref 存放新指令流
             page.page_xref = doc_zh.get_new_xref()  # hack 插入页面的新 xref

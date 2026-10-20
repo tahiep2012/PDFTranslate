@@ -174,6 +174,7 @@ class TranslateConverter(PDFConverterEx):
         self.noto_italic_name = "noto_italic" if noto_italic else None
         self.noto_bold_name = "noto_bold" if noto_bold else None
         self.callback = callback
+        self.table_boxes = {}
         self.translator: BaseTranslator = None
         self.pages_data: list = []
         # e.g. "ollama:gemma2:9b" -> ["ollama", "gemma2:9b"]
@@ -346,10 +347,16 @@ class TranslateConverter(PDFConverterEx):
                 # 当前字符不属于公式或当前字符是公式的第一个字符
                 if not vstk:
                     is_new_para = False
+                    is_in_table = cls in getattr(self, "table_boxes", {}).get(ltpage.pageid, set())
+                    BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·", "–", "—"}
                     if cls != xt_cls:
                         is_new_para = True
-                    elif xt is not None and child.x1 < xt.x0:  # 换行
-                        BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·", "–", "—"}
+                    elif child.get_text() in BULLET_CHARS and not child.get_text().isspace():
+                        is_new_para = True
+                    elif is_in_table and xt is not None and (child.x0 - xt.x1 >= max(10.0, child.size * 0.8)) and abs(child.y0 - xt.y0) < max(6.0, child.size * 0.6):
+                        # Table column separator: gap between words on the same row across table columns
+                        is_new_para = True
+                    elif xt is not None and (child.x1 < xt.x0 or abs(child.y0 - xt.y0) >= max(4.0, child.size * 0.45)):  # 换行或垂直跳跃
                         line_vgap = abs(child.y0 - xt.y0)
                         char_sz = max(child.size, xt.size)
                         curr_text = sstk[-1].rstrip()
@@ -430,6 +437,7 @@ class TranslateConverter(PDFConverterEx):
                     else:                           # 根据当前字符构建一个新的段落
                         sstk.append("")
                         new_p = Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False)
+                        new_p.is_in_table = is_in_table
                         if not child.get_text().isspace():
                             new_p.is_italic = ch_is_italic
                             new_p.is_bold = ch_is_bold
@@ -746,8 +754,12 @@ class TranslateConverter(PDFConverterEx):
 
         def layout_paragraph_tokens(tokens, p_obj, cur_size):
             p_x0 = p_obj.x0
+            is_in_table = getattr(p_obj, "is_in_table", False)
             page_right_margin = ltpage.width - max(36.0, p_obj.x0)
-            p_x1 = max(p_obj.x1, page_right_margin)
+            if not is_in_table or p_obj.x1 >= ltpage.width - 72.0:
+                p_x1 = max(p_obj.x1, page_right_margin)
+            else:
+                p_x1 = p_obj.x1
             p_brk = p_obj.brk
             is_it = getattr(p_obj, "is_italic", False)
             is_bd = getattr(p_obj, "is_bold", False)
@@ -868,8 +880,9 @@ class TranslateConverter(PDFConverterEx):
                     except Exception:
                         continue
 
+                    cell_wrap = (p_x1 < ltpage.width - 72.0) and (cur_x + adv > p_x1 + 0.1 * cur_size)
                     should_wrap_v = (
-                        (p_brk and cur_x + adv > p_x1 + 0.1 * cur_size)
+                        ((p_brk or cell_wrap) and cur_x + adv > p_x1 + 0.1 * cur_size)
                         or (cur_x + adv > ltpage.width - 25.0)
                     ) and (cur_x > p_x0 + 0.1 * cur_size)
 
@@ -909,8 +922,9 @@ class TranslateConverter(PDFConverterEx):
                     if cur_x <= p_x0 + 0.1 * cur_size:
                         continue
                     _, adv = get_char_info(" ", cur_size, is_italic=is_it, is_bold=is_bd)
+                    cell_wrap = is_in_table and (p_x1 < ltpage.width - 72.0) and (cur_x + adv > p_x1 + 0.1 * cur_size)
                     should_wrap_sp = (
-                        (p_brk and cur_x + adv > p_x1 + 0.1 * cur_size)
+                        ((p_brk or cell_wrap) and cur_x + adv > p_x1 + 0.1 * cur_size)
                         or (cur_x + adv > ltpage.width - 25.0)
                     ) and (cur_x > p_x0 + 0.1 * cur_size)
 
@@ -928,8 +942,9 @@ class TranslateConverter(PDFConverterEx):
                 char_infos = [get_char_info(c, cur_size, is_italic=is_it, is_bold=is_bd) for c in tok]
                 word_width = sum(adv for _, adv in char_infos)
 
+                cell_wrap = is_in_table and (p_x1 < ltpage.width - 72.0) and (cur_x + word_width > p_x1 + 0.1 * cur_size)
                 should_wrap_w = (
-                    (p_brk and cur_x + word_width > p_x1 + 0.1 * cur_size)
+                    ((p_brk or cell_wrap or cur_x + word_width > page_right_margin) and cur_x + word_width > p_x1 + 0.1 * cur_size)
                     or (cur_x + word_width > ltpage.width - 25.0)
                 ) and (cur_x > p_x0 + 0.1 * cur_size)
 
@@ -946,6 +961,10 @@ class TranslateConverter(PDFConverterEx):
         paras_layout = []
         for id, new in enumerate(news):
             new = (new or "").replace("\x00", "").replace("\ufeff", "")
+            new = re.sub(r"\(\s+", "(", new)
+            new = re.sub(r"\s+\)", ")", new)
+            if new.strip().lower() in ["(tiếp tục)", "(tiếp tục )", "(tiếp theo)"]:
+                new = "(tiếp theo)"
             p = pstk[id]
             size = p.size
             height = p.y1 - p.y0
@@ -956,9 +975,9 @@ class TranslateConverter(PDFConverterEx):
             ops_vals, lidx = layout_paragraph_tokens(tokens, p, size)
             eff_size = size
 
-            # 2. Smart auto-fit for single-line headings (not p.brk)
+            # 2. Smart auto-fit for single-line headings or labels (not p.brk)
             if not p.brk and lidx > 0:
-                for scale in [0.90, 0.82, 0.75]:
+                for scale in [0.90, 0.82, 0.75, 0.68]:
                     test_size = size * scale
                     test_ops, test_lidx = layout_paragraph_tokens(tokens, p, test_size)
                     if test_lidx == 0:
