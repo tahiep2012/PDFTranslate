@@ -515,14 +515,17 @@ class TranslateConverter(PDFConverterEx):
                 p.color = None
 
             # Center alignment detection:
-            # Paragraph midpoint is close to page center (within 25pt), margins are balanced, and paragraph is NOT a bullet point
+            # ONLY for narrow text blocks (like poems, epigraphs, dedications, short titles).
+            # Body text spanning the column (width >= 0.55 * page_width) is NEVER centered.
             is_bullet_p = any(s.lstrip().startswith(b) for b in BULLET_CHARS)
+            is_body_width = (p.x1 - p.x0) >= 0.55 * ltpage.width
             left_m = p.x0
             right_m = ltpage.width - p.x1
             is_balanced = abs(left_m - right_m) < 25.0
             p_mid = (p.x0 + p.x1) / 2.0
             if (
                 not is_bullet_p
+                and not is_body_width
                 and is_balanced
                 and abs(p_mid - page_mid) < 25.0
                 and left_m > 40.0
@@ -557,7 +560,22 @@ class TranslateConverter(PDFConverterEx):
             nonlocal done_s
             p_idx = getattr(self, "current_page_idx", 1)
             t_pages = getattr(self, "total_pages", 1)
-            if not s.strip() or re.match(r"^\{v\d+\}$", s):  # 空白和公式不翻译
+            s_clean = s.strip()
+            if not s_clean or re.match(r"^\{v\d+\}$", s_clean):  # 空白和公式不翻译
+                with done_lock:
+                    done_s += 1
+                    if self.callback:
+                        self.callback({
+                            "type": "translate",
+                            "done": done_s,
+                            "total": total_s,
+                            "page": p_idx,
+                            "total_pages": t_pages,
+                        })
+                return s
+
+            # URL thô (http://, https://, www.) hoặc URL có tag {v*} không cần dịch
+            if re.match(r"^(https?://\S+|www\.\S+)(\s*\{v\d+\})?$", s_clean, re.IGNORECASE):
                 with done_lock:
                     done_s += 1
                     if self.callback:
@@ -606,6 +624,12 @@ class TranslateConverter(PDFConverterEx):
                 new = self.translator.translate(s_clean)
                 if new:
                     new = unicodedata.normalize("NFC", new)
+                    # Strip any conversational AI chatter or templates (e.g. "Source Text: ...\nTranslated Text: ...")
+                    new = re.sub(r"(?i)^(source|original|translated)\s*text:\s*", "", new).strip()
+                    m_trans = re.search(r"(?is)translated\s*text:\s*(.*)", new)
+                    if m_trans:
+                        new = m_trans.group(1).strip()
+                    new = new.replace("\x00", "").replace("\ufeff", "").strip()
                 if bullet_prefix:
                     new = bullet_prefix + (new or "")
                 if toc_page_suffix:
@@ -902,6 +926,7 @@ class TranslateConverter(PDFConverterEx):
 
         paras_layout = []
         for id, new in enumerate(news):
+            new = (new or "").replace("\x00", "").replace("\ufeff", "")
             p = pstk[id]
             size = p.size
             height = p.y1 - p.y0
@@ -959,7 +984,7 @@ class TranslateConverter(PDFConverterEx):
                         line_end_x = last_op["x"] + last_op.get("width", 0)
                         slack = p.x1 - line_end_x
                         if 0 < slack <= (p.x1 - p.x0) * 0.25:
-                            gap_add = slack / num_gaps
+                            gap_add = min(3.0, slack / num_gaps)
                             for idx_w, grp in enumerate(word_groups):
                                 for v in grp:
                                     v["x"] += idx_w * gap_add
