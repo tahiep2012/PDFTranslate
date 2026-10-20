@@ -325,6 +325,7 @@ class TranslateConverter(PDFConverterEx):
                     # A. 纯公式（代码）段落（锚定绝对位置）sstk[-1]=="" -> sstk[-1]=="{v*}"
                     # B. 文字开头段落（排版相对位置）sstk[-1]!=""
                     or (sstk[-1] != "" and abs(child.x0 - xt.x0) > vmax)    # 因为 cls==xt_cls==0 一定有 sstk[-1]==""，所以这里不需要再判定 cls!=0
+                    or (cls == 0 and xt is not None and (abs(child.x0 - xt.x0) > vmax or abs(child.y0 - xt.y0) > max(15.0, child.size * 2.0)))
                 ):
                     if vstk:
                         if (                                                # 根据公式右侧的文字修正公式的纵向偏移

@@ -188,7 +188,7 @@ def translate_patch(
             # kdtree 是不可能 kdtree 的，不如直接渲染成图片，用空间换时间
             box = np.ones((pix.height, pix.width))
             h, w = box.shape
-            vcls = ["abandon", "figure", "table", "isolate_formula", "formula_caption"]
+            vcls = ["figure", "table", "isolate_formula", "formula_caption"]
             raw_boxes = [d.xyxy.squeeze().tolist() for d in page_layout.boxes]
             valid_box_indices = []
             for i, d in enumerate(page_layout.boxes):
