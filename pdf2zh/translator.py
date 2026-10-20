@@ -174,49 +174,69 @@ class GoogleTranslator(BaseTranslator):
         self.session = requests.Session()
         self.endpoint = "https://translate.google.com/m"
         self.headers = {
-            "User-Agent": "Mozilla/4.0 (compatible;MSIE 6.0;Windows NT 5.1;SV1;.NET CLR 1.1.4322;.NET CLR 2.0.50727;.NET CLR 3.0.04506.30)"  # noqa: E501
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
         }
+        self.session.headers.update(self.headers)
+        self._bing_fallback = None
 
     def do_translate(self, text):
         text = text[:5000]  # google translate max length
-        # Priority 1: Google's official translate_a API (extremely fast, robust, no 429 IP block)
-        try:
-            gtx_url = "https://translate.googleapis.com/translate_a/single"
-            params = {
-                "client": "gtx",
-                "sl": self.lang_in,
-                "tl": self.lang_out,
-                "dt": "t",
-                "q": text,
-            }
-            resp = self.session.get(gtx_url, params=params, timeout=12)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
-                    translated = "".join(seg[0] for seg in data[0] if seg and len(seg) > 0 and seg[0])
-                    if translated:
-                        return remove_control_characters(translated)
-        except Exception as e:
-            logger.debug(f"Google gtx API failed, falling back to /m endpoint: {e}")
+        # Priority 1: Google's translate_a API with multiple client rotation (bypasses 429)
+        for client in ["dict-chrome-ex", "tw-ob", "gtx"]:
+            try:
+                gtx_url = "https://translate.googleapis.com/translate_a/single"
+                params = {
+                    "client": client,
+                    "sl": self.lang_in,
+                    "tl": self.lang_out,
+                    "dt": "t",
+                    "q": text,
+                }
+                resp = self.session.get(gtx_url, params=params, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                        translated = "".join(seg[0] for seg in data[0] if seg and len(seg) > 0 and seg[0])
+                        if translated:
+                            return remove_control_characters(translated)
+            except Exception as e:
+                logger.debug(f"Google client {client} failed: {e}")
+                continue
 
-        # Priority 2: Fallback to old web scraping endpoint
-        response = self.session.get(
-            self.endpoint,
-            params={"tl": self.lang_out, "sl": self.lang_in, "q": text},
-            headers=self.headers,
-            timeout=15,
-        )
-        re_result = re.findall(
-            r'(?s)class="(?:t0|result-container)">(.*?)<', response.text
-        )
-        if response.status_code == 400:
-            result = "IRREPARABLE TRANSLATION ERROR"
-        elif response.status_code == 429:
-            raise requests.exceptions.RequestException("Google Translate Rate Limited (429)")
-        else:
-            response.raise_for_status()
-            result = html.unescape(re_result[0])
-        return remove_control_characters(result)
+        # Priority 2: Fallback to Bing Translator if Google clients encounter rate limits
+        try:
+            if self._bing_fallback is None:
+                bing_cls = globals().get("BingTranslator")
+                if bing_cls:
+                    self._bing_fallback = bing_cls(self.lang_in, self.lang_out, "bing", ignore_cache=self.ignore_cache)
+            if self._bing_fallback:
+                translated = self._bing_fallback.do_translate(text)
+                if translated:
+                    return translated
+        except Exception as e:
+            logger.debug(f"Bing fallback for GoogleTranslator failed: {e}")
+
+        # Priority 3: Fallback to old web scraping endpoint
+        try:
+            response = self.session.get(
+                self.endpoint,
+                params={"tl": self.lang_out, "sl": self.lang_in, "q": text},
+                headers=self.headers,
+                timeout=12,
+            )
+            if response.status_code == 200:
+                re_result = re.findall(
+                    r'(?s)class="(?:t0|result-container)">(.*?)<', response.text
+                )
+                if re_result:
+                    return remove_control_characters(html.unescape(re_result[0]))
+        except Exception as e:
+            logger.debug(f"Google web /m endpoint failed: {e}")
+
+        # Safety Fallback: Return original text rather than throwing unhandled fatal exception
+        return text
 
 
 class BingTranslator(BaseTranslator):

@@ -654,7 +654,25 @@ class TranslateConverter(PDFConverterEx):
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=self.thread
         ) as executor:
-            news = list(executor.map(worker, sstk))
+            future_to_idx = {executor.submit(worker, s): i for i, s in enumerate(sstk)}
+            news = [None] * len(sstk)
+            for future in concurrent.futures.as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    news[idx] = future.result()
+                except Exception as e:
+                    log.warning(f"Translation failed for paragraph {idx}: {e}. Keeping original text.")
+                    news[idx] = sstk[idx]
+                    with done_lock:
+                        done_s += 1
+                        if self.callback:
+                            self.callback({
+                                "type": "translate",
+                                "done": done_s,
+                                "total": total_s,
+                                "page": getattr(self, "current_page_idx", 1),
+                                "total_pages": getattr(self, "total_pages", 1),
+                            })
 
         ############################################################
         # C. 新文档排版
