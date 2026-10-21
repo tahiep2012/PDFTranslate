@@ -580,73 +580,75 @@ class TranslateConverter(PDFConverterEx):
                     return False
             return True
 
+        def pre_clean_paragraph(s: str):
+            s_clean = s.strip()
+            if not s_clean or re.match(r"^\{v\d+\}$", s_clean):
+                return True, "", "", s
+            if re.match(r"^(https?://\S+|www\.\S+)(\s*\{v\d+\})?$", s_clean, re.IGNORECASE):
+                return True, "", "", s
+
+            m_toc = re.match(r"^(.*?)([\.\s\ufffd]{2,})(\d+|[ivxlcdm]+)\s*$", s, re.IGNORECASE)
+            toc_page_suffix = ""
+            if m_toc:
+                s_to_trans = m_toc.group(1).strip()
+                toc_page_suffix = f" ... {m_toc.group(3).strip()}"
+            else:
+                s_to_trans = s
+
+            bullet_prefix = ""
+            m_bullet = re.match(r"^(\s*[•▪▸►○●■◆◇·–—]\s*)", s_to_trans)
+            if m_bullet:
+                bullet_prefix = m_bullet.group(1)
+                s_to_trans = s_to_trans[len(bullet_prefix):]
+
+            s_clean = re.sub(r'[\ufffd]{2,}', '...', s_to_trans)
+            s_clean = s_clean.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\ufffd", " ")
+            if re.search(r'\b[A-Za-z]\s+[A-Za-z]\s+[A-Za-z]\b', s_clean):
+                chunks = re.split(r'(\{v\d+\}|\s{2,})', s_clean)
+                new_chunks = []
+                for chunk in chunks:
+                    if chunk.startswith('{v') or (chunk.startswith(' ') and len(chunk) >= 2):
+                        new_chunks.append(chunk)
+                    else:
+                        tokens = chunk.strip().split(' ')
+                        if len(tokens) >= 2 and all(len(t) == 1 or t in ("'s", "'t", "'d", "'m", "'re", "'ve", "'ll") for t in tokens):
+                            new_chunks.append("".join(tokens))
+                        else:
+                            new_chunks.append(chunk)
+                s_clean = re.sub(r'[ \t]{2,}', ' ', "".join(new_chunks)).strip()
+
+            return False, bullet_prefix, toc_page_suffix, s_clean
+
+        def post_process_translation(new_text: str, bullet_prefix: str, toc_page_suffix: str) -> str:
+            if new_text:
+                new_text = unicodedata.normalize("NFC", new_text)
+                new_text = re.sub(r"(?i)^(source|original|translated)\s*text:\s*", "", new_text).strip()
+                m_trans = re.search(r"(?is)translated\s*text:\s*(.*)", new_text)
+                if m_trans:
+                    new_text = m_trans.group(1).strip()
+                new_text = new_text.replace("\x00", "").replace("\ufeff", "").strip()
+            if bullet_prefix:
+                new_text = bullet_prefix + (new_text or "")
+            if toc_page_suffix:
+                new_text = (new_text or "") + toc_page_suffix
+            return new_text
+
         @retry(wait=wait_fixed(2), stop=stop_after_attempt(3), retry=retry_if_exception(is_recoverable_error))
-        def worker(s: str):  # 多线程翻译
+        def worker(s: str):  # 多线程翻译 (Fallback or per-paragraph engine)
             nonlocal done_s
             p_idx = getattr(self, "current_page_idx", 1)
             t_pages = getattr(self, "total_pages", 1)
             if hasattr(self, "translator") and self.translator:
                 setattr(self.translator, "current_page_idx", p_idx)
-            s_clean = s.strip()
-            if not s_clean or re.match(r"^\{v\d+\}$", s_clean):  # 空白和公式不翻译
-                with done_lock:
-                    done_s += 1
-                    notify_progress()
-                return s
-
-            # URL thô (http://, https://, www.) hoặc URL có tag {v*} không cần dịch
-            if re.match(r"^(https?://\S+|www\.\S+)(\s*\{v\d+\})?$", s_clean, re.IGNORECASE):
+            is_skip, bp, tp, s_clean = pre_clean_paragraph(s)
+            if is_skip or not s_clean:
                 with done_lock:
                     done_s += 1
                     notify_progress()
                 return s
             try:
-                # 检查是否为 TOC 目录项：如果是，只翻译标题部分，保留页码和前缀
-                m_toc = re.match(r"^(.*?)([\.\s\ufffd]{2,})(\d+|[ivxlcdm]+)\s*$", s, re.IGNORECASE)
-                toc_page_suffix = ""
-                if m_toc:
-                    s_to_trans = m_toc.group(1).strip()
-                    toc_page_suffix = f" ... {m_toc.group(3).strip()}"
-                else:
-                    s_to_trans = s
-
-                # 保护列表项开头的 Bullet 符号（•, ▪, ▸ 等），防止翻译引擎篡改、重复或丢失
-                bullet_prefix = ""
-                m_bullet = re.match(r"^(\s*[•▪▸►○●■◆◇·–—]\s*)", s_to_trans)
-                if m_bullet:
-                    bullet_prefix = m_bullet.group(1)
-                    s_to_trans = s_to_trans[len(bullet_prefix):]
-
-                # 替换特殊引号并安全处理 \ufffd (多重 \ufffd 转为点，单 stray \ufffd 转为空格，绝不变为单引号)
-                s_clean = re.sub(r'[\ufffd]{2,}', '...', s_to_trans)
-                s_clean = s_clean.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\ufffd", " ")
-                if re.search(r'\b[A-Za-z]\s+[A-Za-z]\s+[A-Za-z]\b', s_clean):
-                    chunks = re.split(r'(\{v\d+\}|\s{2,})', s_clean)
-                    new_chunks = []
-                    for chunk in chunks:
-                        if chunk.startswith('{v') or (chunk.startswith(' ') and len(chunk) >= 2):
-                            new_chunks.append(chunk)
-                        else:
-                            tokens = chunk.strip().split(' ')
-                            if len(tokens) >= 2 and all(len(t) == 1 or t in ("'s", "'t", "'d", "'m", "'re", "'ve", "'ll") for t in tokens):
-                                new_chunks.append("".join(tokens))
-                            else:
-                                new_chunks.append(chunk)
-                    s_clean = re.sub(r'[ \t]{2,}', ' ', "".join(new_chunks)).strip()
-
                 new = self.translator.translate(s_clean)
-                if new:
-                    new = unicodedata.normalize("NFC", new)
-                    # Strip any conversational AI chatter or templates (e.g. "Source Text: ...\nTranslated Text: ...")
-                    new = re.sub(r"(?i)^(source|original|translated)\s*text:\s*", "", new).strip()
-                    m_trans = re.search(r"(?is)translated\s*text:\s*(.*)", new)
-                    if m_trans:
-                        new = m_trans.group(1).strip()
-                    new = new.replace("\x00", "").replace("\ufeff", "").strip()
-                if bullet_prefix:
-                    new = bullet_prefix + (new or "")
-                if toc_page_suffix:
-                    new = (new or "") + toc_page_suffix
+                new = post_process_translation(new, bp, tp)
                 with done_lock:
                     done_s += 1
                     notify_progress()
@@ -657,21 +659,64 @@ class TranslateConverter(PDFConverterEx):
                 else:
                     log.exception(e, exc_info=False)
                 raise e
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=self.thread
-        ) as executor:
-            future_to_idx = {executor.submit(worker, s): i for i, s in enumerate(sstk)}
-            news = [None] * len(sstk)
-            for future in concurrent.futures.as_completed(future_to_idx):
-                idx = future_to_idx[future]
-                try:
-                    news[idx] = future.result()
-                except Exception as e:
-                    log.warning(f"Translation failed for paragraph {idx}: {e}. Keeping original text.")
-                    news[idx] = sstk[idx]
+
+        news = [None] * len(sstk)
+        batch_succeeded = False
+
+        # Fast Batch Packing: pack all paragraphs of this page into 1 single request for AI models
+        if getattr(self.translator, "supports_batch", False):
+            p_idx = getattr(self, "current_page_idx", 1)
+            if hasattr(self, "translator") and self.translator:
+                setattr(self.translator, "current_page_idx", p_idx)
+
+            pre_items = [pre_clean_paragraph(s) for s in sstk]
+            to_trans_indices = []
+            to_trans_texts = []
+
+            for i, (is_skip, bp, tp, clean_t) in enumerate(pre_items):
+                if is_skip or not clean_t:
+                    news[i] = sstk[i]
                     with done_lock:
                         done_s += 1
-                        notify_progress()
+                else:
+                    to_trans_indices.append(i)
+                    to_trans_texts.append(clean_t)
+
+            notify_progress()
+
+            if not to_trans_texts:
+                batch_succeeded = True
+            else:
+                try:
+                    batch_res = self.translator.translate_batch(to_trans_texts)
+                    for idx, trans_raw in zip(to_trans_indices, batch_res):
+                        _, bp, tp, _ = pre_items[idx]
+                        news[idx] = post_process_translation(trans_raw or sstk[idx], bp, tp)
+                        with done_lock:
+                            done_s += 1
+                            notify_progress()
+                    batch_succeeded = True
+                except Exception as e:
+                    log.warning(f"Batch translation failed on page {p_idx}: {e}. Falling back to thread pool.")
+                    batch_succeeded = False
+
+        if not batch_succeeded:
+            done_s = 0
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.thread
+            ) as executor:
+                future_to_idx = {executor.submit(worker, s): i for i, s in enumerate(sstk)}
+                news = [None] * len(sstk)
+                for future in concurrent.futures.as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        news[idx] = future.result()
+                    except Exception as e:
+                        log.warning(f"Translation failed for paragraph {idx}: {e}. Keeping original text.")
+                        news[idx] = sstk[idx]
+                        with done_lock:
+                            done_s += 1
+                            notify_progress()
 
         ############################################################
         # C. 新文档排版

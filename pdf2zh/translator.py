@@ -104,6 +104,44 @@ class BaseTranslator:
             self.cache.set(text, translation)
         return translation
 
+    supports_batch = False
+
+    def translate_batch(self, texts: list[str], ignore_cache: bool = False) -> list[str]:
+        """
+        Batch translation with automatic caching and fallback.
+        Default implementation calls translate() for each text.
+        Subclasses can override do_translate_batch() for efficient packing.
+        """
+        results = [None] * len(texts)
+        missing_indices = []
+        missing_texts = []
+
+        for idx, text in enumerate(texts):
+            if not text:
+                results[idx] = text
+                continue
+            if not (self.ignore_cache or ignore_cache):
+                cached = self.cache.get(text)
+                if cached is not None:
+                    results[idx] = cached
+                    continue
+            missing_indices.append(idx)
+            missing_texts.append(text)
+
+        if not missing_texts:
+            return results
+
+        batch_results = self.do_translate_batch(missing_texts)
+        for orig_idx, orig_text, trans in zip(missing_indices, missing_texts, batch_results):
+            results[orig_idx] = trans
+            if trans and not (trans == orig_text and re.search(r"[A-Za-z]{3,}", orig_text)):
+                self.cache.set(orig_text, trans)
+
+        return results
+
+    def do_translate_batch(self, texts: list[str]) -> list[str]:
+        return [self.do_translate(t) for t in texts]
+
     def do_translate(self, text: str) -> str:
         """
         Actual translate text, override this method
@@ -483,6 +521,80 @@ class OpenAITranslator(BaseTranslator):
         "OPENAI_TIMEOUT": "30.0",  # Network timeout in seconds
     }
     CustomPrompt = True
+    supports_batch = True
+
+    def prompt_batch(self, texts: list[str]) -> list[dict[str, str]]:
+        block_items = []
+        for i, t in enumerate(texts):
+            block_items.append(f'<block id="{i}">\n{t}\n</block>')
+        content_body = "\n\n".join(block_items)
+        instruction = (
+            f"You are a professional, authentic machine translation engine translating to {self.lang_out}.\n"
+            "Translate each numbered <block id=\"N\"> content into the target language.\n"
+            "STRICT RULES:\n"
+            "1. Output ONLY the translated blocks using the exact format: <block id=\"N\">translated text</block>\n"
+            "2. Preserve the exact order and IDs from 0 to N-1.\n"
+            "3. Keep all special placeholders like {v0}, {v1}, etc. exactly unchanged.\n"
+            "4. Do NOT include any explanations, greetings, or notes."
+        )
+        return [
+            {
+                "role": "user",
+                "content": f"{instruction}\n\nSource text:\n{content_body}\n\nTranslated text:\n",
+            }
+        ]
+
+    def _parse_batch_response(self, response_text: str, expected_count: int) -> list[str | None]:
+        results = [None] * expected_count
+        pattern = re.compile(
+            r'(?:<block\s+id=["\']?(\d+)["\']?>|\[(?:BLOCK_)?(\d+)\])\s*(.*?)(?=(?:<block\s+id=["\']?\d+["\']?>|\[(?:BLOCK_)?\d+\]|</block>|\[/(?:BLOCK_)?\d+\]|\Z))',
+            re.DOTALL | re.IGNORECASE,
+        )
+        for m in pattern.finditer(response_text):
+            idx_str = m.group(1) or m.group(2)
+            try:
+                idx = int(idx_str)
+                content = m.group(3).strip()
+                content = re.sub(r'</block>$|\[/(?:BLOCK_)?\d+\]$', '', content, flags=re.IGNORECASE).strip()
+                if 0 <= idx < expected_count and not results[idx]:
+                    results[idx] = content
+            except Exception:
+                continue
+        return results
+
+    def do_translate_batch(self, texts: list[str]) -> list[str]:
+        if not texts:
+            return []
+        if len(texts) == 1:
+            return [self.do_translate(texts[0])]
+
+        CHUNK_SIZE = 15
+        final_results = []
+        for start_idx in range(0, len(texts), CHUNK_SIZE):
+            chunk = texts[start_idx : start_idx + CHUNK_SIZE]
+            chunk_results = self._translate_chunk_with_retry(chunk)
+            final_results.extend(chunk_results)
+        return final_results
+
+    def _translate_chunk_with_retry(self, chunk: list[str]) -> list[str]:
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                **self.options,
+                messages=self.prompt_batch(chunk),
+                stream=False,
+            )
+            raw_text = response.choices[0].message.content or ""
+            raw_text = self.think_filter_regex.sub("", raw_text).strip()
+            parsed = self._parse_batch_response(raw_text, len(chunk))
+            for i in range(len(chunk)):
+                if not parsed[i]:
+                    logger.debug(f"Block {i} missing in batch response, translating individually...")
+                    parsed[i] = self.do_translate(chunk[i])
+            return parsed
+        except Exception as e:
+            logger.warning(f"Batch translation failed ({e}), falling back to item-by-item translation...")
+            return [self.do_translate(t) for t in chunk]
 
     def __init__(
         self,
@@ -890,6 +1002,75 @@ class GeminiTranslator(OpenAITranslator):
                 ignore_cache=self.ignore_cache,
             )
         return self._fallback_translator.do_translate(text)
+
+    @retry(
+        retry=retry_if_exception_type((
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+            openai.APITimeoutError,
+        )),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1.5, min=2, max=6),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Gemini API busy ({retry_state.outcome.exception()}), retrying batch in {retry_state.next_action.sleep:.1f}s... "
+            f"(Attempt {retry_state.attempt_number}/3)"
+        ),
+    )
+    def _call_gemini_batch_with_retry(self, chunk: list[str]) -> list[str]:
+        with GeminiTranslator._lock:
+            now = time.time()
+            elapsed = now - GeminiTranslator._last_request_time
+            safe_interval = 3.0
+            if elapsed < safe_interval:
+                time.sleep(safe_interval - elapsed)
+            GeminiTranslator._last_request_time = time.time()
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            **self.options,
+            messages=self.prompt_batch(chunk),
+            stream=False,
+        )
+        raw_text = response.choices[0].message.content or ""
+        raw_text = self.think_filter_regex.sub("", raw_text).strip()
+        parsed = self._parse_batch_response(raw_text, len(chunk))
+        for i in range(len(chunk)):
+            if not parsed[i]:
+                parsed[i] = self.do_translate(chunk[i])
+        return parsed
+
+    def _translate_chunk_with_retry(self, chunk: list[str]) -> list[str]:
+        if not GeminiTranslator._quota_exhausted:
+            try:
+                return self._call_gemini_batch_with_retry(chunk)
+            except Exception as e:
+                err_str = str(e).lower()
+                current_p = getattr(self, "current_page_idx", None)
+                if GeminiTranslator._fallback_page is None and current_p:
+                    GeminiTranslator._fallback_page = current_p
+
+                if "quota" in err_str or "resource_exhausted" in err_str or "429" in err_str:
+                    logger.warning(
+                        f"Gemini API quota exhausted in batch ({e}). Auto-switching remaining translation to Google Translate."
+                    )
+                    GeminiTranslator._quota_exhausted = True
+                    GeminiTranslator._fallback_reason = "Hết hạn mức yêu cầu Gemini (Quota 429)"
+                else:
+                    logger.warning(
+                        f"Gemini batch request failed ({e}). Auto-falling back to Google Translate."
+                    )
+                    if not GeminiTranslator._fallback_reason:
+                        GeminiTranslator._fallback_reason = "Sự cố mạng / lỗi kết nối Gemini"
+
+        if self._fallback_translator is None:
+            self._fallback_translator = GoogleTranslator(
+                lang_in=self.lang_in,
+                lang_out=self.lang_out,
+                model="",
+                ignore_cache=self.ignore_cache,
+            )
+        return [self._fallback_translator.do_translate(t) for t in chunk]
 
 
 class AzureTranslator(BaseTranslator):
