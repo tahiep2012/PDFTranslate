@@ -480,6 +480,7 @@ class OpenAITranslator(BaseTranslator):
         "OPENAI_STREAM": "true",  # Configurable: set to "true" (default) or "false"
         "OPENAI_STOP_TOKENS": "",  # Space separated list of stop tokens
         "OPENAI_MAX_TOKENS": -1,  # Specify -1 to call the API without setting max_tokens
+        "OPENAI_TIMEOUT": "30.0",  # Network timeout in seconds
     }
     CustomPrompt = True
 
@@ -517,9 +518,11 @@ class OpenAITranslator(BaseTranslator):
             self.options["stop"] = stop_tokens
         if max_tokens > 0:
             self.options["max_tokens"] = max_tokens
+        timeout_val = float(self.envs.get("OPENAI_TIMEOUT") or 30.0)
         self.client = openai.OpenAI(
             base_url=base_url or self.envs["OPENAI_BASE_URL"],
             api_key=api_key or self.envs["OPENAI_API_KEY"],
+            timeout=timeout_val,
         )
         self.prompttext = prompt
         self.add_cache_impact_parameters("temperature", self.options["temperature"])
@@ -534,12 +537,17 @@ class OpenAITranslator(BaseTranslator):
         self.stream = stream_val == "true"
 
     @retry(
-        retry=retry_if_exception_type(openai.RateLimitError),
-        stop=stop_after_attempt(100),
-        wait=wait_exponential(multiplier=1, min=1, max=15),
+        retry=retry_if_exception_type((
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+            openai.APITimeoutError,
+        )),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
         before_sleep=lambda retry_state: logger.warning(
-            f"RateLimitError, retrying in {retry_state.next_action.sleep} seconds... "
-            f"(Attempt {retry_state.attempt_number}/100)"
+            f"OpenAI API busy ({retry_state.outcome.exception()}), retrying in {retry_state.next_action.sleep:.1f}s... "
+            f"(Attempt {retry_state.attempt_number}/5)"
         ),
     )
     def do_translate(self, text) -> str:
@@ -772,6 +780,7 @@ class GeminiTranslator(OpenAITranslator):
     CustomPrompt = True
     _last_request_time = 0.0
     _lock = threading.Lock()
+    _quota_exhausted = False
 
     def __init__(
         self, lang_in, lang_out, model, envs=None, prompt=None, ignore_cache=False
@@ -790,6 +799,9 @@ class GeminiTranslator(OpenAITranslator):
             api_key=api_key,
             ignore_cache=ignore_cache,
         )
+        # Disable streaming to eliminate socket hangs on Windows TCP keepalive
+        self.stream = False
+        self._fallback_translator = None
         self.prompttext = prompt
         self.add_cache_impact_parameters("prompt", self.prompt("", self.prompttext))
 
@@ -800,19 +812,19 @@ class GeminiTranslator(OpenAITranslator):
             openai.InternalServerError,
             openai.APITimeoutError,
         )),
-        stop=stop_after_attempt(50),
-        wait=wait_exponential(multiplier=2, min=4, max=30),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1.5, min=2, max=6),
         before_sleep=lambda retry_state: logger.warning(
-            f"Gemini API rate limit or network busy, retrying in {retry_state.next_action.sleep:.1f}s... "
-            f"(Attempt {retry_state.attempt_number}/50)"
+            f"Gemini API busy ({retry_state.outcome.exception()}), retrying in {retry_state.next_action.sleep:.1f}s... "
+            f"(Attempt {retry_state.attempt_number}/3)"
         ),
     )
-    def do_translate(self, text) -> str:
-        # Pacing control: ensure at least 4.0 seconds between requests across all threads (max 15 RPM free tier)
+    def _call_gemini_with_retry(self, text: str) -> str:
+        # Pacing control: ensure at least 3.0 seconds between requests across all threads
         with GeminiTranslator._lock:
             now = time.time()
             elapsed = now - GeminiTranslator._last_request_time
-            safe_interval = 4.0  # safe limit for Gemini Free 15 RPM
+            safe_interval = 3.0
             if elapsed < safe_interval:
                 time.sleep(safe_interval - elapsed)
             GeminiTranslator._last_request_time = time.time()
@@ -825,6 +837,32 @@ class GeminiTranslator(OpenAITranslator):
                 self.model = "gemini-flash-lite-latest"
                 return super().do_translate(text)
             raise
+
+    def do_translate(self, text: str) -> str:
+        if not GeminiTranslator._quota_exhausted:
+            try:
+                return self._call_gemini_with_retry(text)
+            except Exception as e:
+                err_str = str(e).lower()
+                if "quota" in err_str or "resource_exhausted" in err_str or "429" in err_str:
+                    logger.warning(
+                        f"Gemini API quota exhausted ({e}). Auto-switching remaining translation to Google Translate."
+                    )
+                    GeminiTranslator._quota_exhausted = True
+                else:
+                    logger.warning(
+                        f"Gemini API request failed ({e}). Auto-falling back to Google Translate for this paragraph."
+                    )
+
+        # Seamless fallback to Google Translate so document translation never hangs
+        if self._fallback_translator is None:
+            self._fallback_translator = GoogleTranslator(
+                lang_in=self.lang_in,
+                lang_out=self.lang_out,
+                model="",
+                ignore_cache=self.ignore_cache,
+            )
+        return self._fallback_translator.do_translate(text)
 
 
 class AzureTranslator(BaseTranslator):
