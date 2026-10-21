@@ -556,6 +556,22 @@ class TranslateConverter(PDFConverterEx):
         done_s = 0
         done_lock = threading.Lock()
 
+        def notify_progress():
+            if self.callback:
+                cb_data = {
+                    "type": "translate",
+                    "done": done_s,
+                    "total": total_s,
+                    "page": getattr(self, "current_page_idx", 1),
+                    "total_pages": getattr(self, "total_pages", 1),
+                }
+                fb_fn = getattr(self.translator, "get_fallback_status", None)
+                if fb_fn:
+                    fb = fb_fn()
+                    if fb:
+                        cb_data["fallback"] = fb
+                self.callback(cb_data)
+
         def is_recoverable_error(exception):
             msg = str(exception).lower()
             # Do not retry permanent client errors (invalid key, model not found, forbidden, bad request)
@@ -569,32 +585,20 @@ class TranslateConverter(PDFConverterEx):
             nonlocal done_s
             p_idx = getattr(self, "current_page_idx", 1)
             t_pages = getattr(self, "total_pages", 1)
+            if hasattr(self, "translator") and self.translator:
+                setattr(self.translator, "current_page_idx", p_idx)
             s_clean = s.strip()
             if not s_clean or re.match(r"^\{v\d+\}$", s_clean):  # 空白和公式不翻译
                 with done_lock:
                     done_s += 1
-                    if self.callback:
-                        self.callback({
-                            "type": "translate",
-                            "done": done_s,
-                            "total": total_s,
-                            "page": p_idx,
-                            "total_pages": t_pages,
-                        })
+                    notify_progress()
                 return s
 
             # URL thô (http://, https://, www.) hoặc URL có tag {v*} không cần dịch
             if re.match(r"^(https?://\S+|www\.\S+)(\s*\{v\d+\})?$", s_clean, re.IGNORECASE):
                 with done_lock:
                     done_s += 1
-                    if self.callback:
-                        self.callback({
-                            "type": "translate",
-                            "done": done_s,
-                            "total": total_s,
-                            "page": p_idx,
-                            "total_pages": t_pages,
-                        })
+                    notify_progress()
                 return s
             try:
                 # 检查是否为 TOC 目录项：如果是，只翻译标题部分，保留页码和前缀
@@ -645,14 +649,7 @@ class TranslateConverter(PDFConverterEx):
                     new = (new or "") + toc_page_suffix
                 with done_lock:
                     done_s += 1
-                    if self.callback:
-                        self.callback({
-                            "type": "translate",
-                            "done": done_s,
-                            "total": total_s,
-                            "page": p_idx,
-                            "total_pages": t_pages,
-                        })
+                    notify_progress()
                 return new
             except BaseException as e:
                 if log.isEnabledFor(logging.DEBUG):
@@ -674,14 +671,7 @@ class TranslateConverter(PDFConverterEx):
                     news[idx] = sstk[idx]
                     with done_lock:
                         done_s += 1
-                        if self.callback:
-                            self.callback({
-                                "type": "translate",
-                                "done": done_s,
-                                "total": total_s,
-                                "page": getattr(self, "current_page_idx", 1),
-                                "total_pages": getattr(self, "total_pages", 1),
-                            })
+                        notify_progress()
 
         ############################################################
         # C. 新文档排版

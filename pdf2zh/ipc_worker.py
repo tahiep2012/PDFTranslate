@@ -110,6 +110,10 @@ def emit(event_type: str, **data):
 def run_translation(request_data: dict):
     from pdf2zh.doclayout import ModelInstance, OnnxModel
     from pdf2zh.high_level import translate
+    from pdf2zh.translator import GeminiTranslator
+
+    # Reset any previous session status
+    GeminiTranslator.reset_status()
 
     input_file = request_data.get("file")
     if not input_file or not Path(input_file).exists():
@@ -176,8 +180,14 @@ def run_translation(request_data: dict):
                 tot = max(1, int(info.get("total", 1)))
                 cur_p = max(1, int(info.get("page", 1)))
                 tot_p = max(1, int(info.get("total_pages", 1)))
+                fb = info.get("fallback")
                 page_progress = min(1.0, 0.15 + (done / tot) * 0.85)
                 overall_val = min(0.90, 0.05 + (((cur_p - 1) + page_progress) / tot_p) * 0.85)
+                if fb and fb.get("active"):
+                    fb_page = fb.get("page") or cur_p
+                    msg = f"Trang {cur_p}/{tot_p} ⚠️ [Google Translate từ trang {fb_page}]: Đang dịch đoạn {done}/{tot} ({int(page_progress * 100)}%)..."
+                else:
+                    msg = f"Trang {cur_p}/{tot_p}: Đang dịch đoạn {done}/{tot} ({int(page_progress * 100)}%)..."
                 emit(
                     "progress",
                     value=overall_val,
@@ -187,7 +197,9 @@ def run_translation(request_data: dict):
                     current_sentence=done,
                     total_sentences=tot,
                     stage="translating",
-                    message=f"Trang {cur_p}/{tot_p}: Đang dịch đoạn {done}/{tot} ({int(page_progress * 100)}%)...",
+                    message=msg,
+                    fallback_info=fb.get("message") if fb else None,
+                    fallback_page=fb.get("page") if fb else None,
                 )
             elif event_type == "rendering":
                 exp_fmt = request_data.get("export_format", "both")
@@ -239,6 +251,8 @@ def run_translation(request_data: dict):
 
         exp_fmt = request_data.get("export_format", "both")
         emit("progress", value=1.0, stage="done", message="Hoàn thành dịch tài liệu!")
+        fb_status = GeminiTranslator.get_fallback_status()
+        fallback_notice = fb_status.get("message") if fb_status else None
         emit(
             "success",
             mono=str(Path(mono_path).resolve()) if mono_path and Path(mono_path).exists() else None,
@@ -247,6 +261,7 @@ def run_translation(request_data: dict):
             filename=Path(input_file).name,
             output_dir=str(Path(output_dir).resolve()),
             export_format=exp_fmt,
+            fallback_notice=fallback_notice,
         )
 
     except Exception as e:

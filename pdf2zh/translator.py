@@ -781,6 +781,26 @@ class GeminiTranslator(OpenAITranslator):
     _last_request_time = 0.0
     _lock = threading.Lock()
     _quota_exhausted = False
+    _fallback_page = None
+    _fallback_reason = ""
+
+    @classmethod
+    def get_fallback_status(cls):
+        if cls._quota_exhausted or cls._fallback_page is not None:
+            p_str = f"trang {cls._fallback_page}" if cls._fallback_page else "trang hiện tại"
+            return {
+                "active": True,
+                "page": cls._fallback_page,
+                "reason": cls._fallback_reason or "Hết quota Gemini",
+                "message": f"Đã tự động chuyển từ Gemini sang Google Translate từ {p_str} ({cls._fallback_reason or 'do chạm hạn mức API'}).",
+            }
+        return None
+
+    @classmethod
+    def reset_status(cls):
+        cls._quota_exhausted = False
+        cls._fallback_page = None
+        cls._fallback_reason = ""
 
     def __init__(
         self, lang_in, lang_out, model, envs=None, prompt=None, ignore_cache=False
@@ -844,15 +864,22 @@ class GeminiTranslator(OpenAITranslator):
                 return self._call_gemini_with_retry(text)
             except Exception as e:
                 err_str = str(e).lower()
+                current_p = getattr(self, "current_page_idx", None)
+                if GeminiTranslator._fallback_page is None and current_p:
+                    GeminiTranslator._fallback_page = current_p
+
                 if "quota" in err_str or "resource_exhausted" in err_str or "429" in err_str:
                     logger.warning(
                         f"Gemini API quota exhausted ({e}). Auto-switching remaining translation to Google Translate."
                     )
                     GeminiTranslator._quota_exhausted = True
+                    GeminiTranslator._fallback_reason = "Hết hạn mức yêu cầu Gemini (Quota 429)"
                 else:
                     logger.warning(
                         f"Gemini API request failed ({e}). Auto-falling back to Google Translate for this paragraph."
                     )
+                    if not GeminiTranslator._fallback_reason:
+                        GeminiTranslator._fallback_reason = "Sự cố mạng / lỗi kết nối Gemini"
 
         # Seamless fallback to Google Translate so document translation never hangs
         if self._fallback_translator is None:

@@ -25,6 +25,7 @@ import {
   ChevronUp,
   FileCode,
   Database,
+  AlertTriangle,
 } from "lucide-react";
 
 interface TranslationProgress {
@@ -36,6 +37,8 @@ interface TranslationProgress {
   total_sentences?: number;
   stage: string;
   message: string;
+  fallback_info?: string | null;
+  fallback_page?: number | null;
 }
 
 interface TranslationSuccess {
@@ -45,6 +48,7 @@ interface TranslationSuccess {
   filename: string;
   output_dir: string;
   export_format?: string;
+  fallback_notice?: string | null;
 }
 
 export interface CustomModel {
@@ -103,6 +107,7 @@ export default function App() {
 
   const [result, setResult] = useState<TranslationSuccess | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [useCache, setUseCache] = useState<boolean>(true);
@@ -186,6 +191,9 @@ export default function App() {
       if (event.payload.stage) {
         setCurrentStage(event.payload.stage);
       }
+      if (event.payload.fallback_info) {
+        setFallbackNotice(event.payload.fallback_info);
+      }
       setProgressMsg(event.payload.message || "Đang xử lý...");
     });
 
@@ -195,6 +203,9 @@ export default function App() {
       setPageProgress(100);
       setCurrentStage("done");
       setProgressMsg("Dịch tài liệu thành công!");
+      if (event.payload.fallback_notice) {
+        setFallbackNotice(event.payload.fallback_notice);
+      }
       setResult(event.payload);
     });
 
@@ -342,6 +353,7 @@ export default function App() {
     setProgressMsg("Đang chuẩn bị tiến trình dịch...");
     setResult(null);
     setErrorMsg("");
+    setFallbackNotice(null);
 
     let pages: number[] | null = null;
     if (pageChoice === "first") pages = [0];
@@ -920,6 +932,14 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Dynamic Fallback Notice Banner */}
+              {fallbackNotice && (
+                <div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-amber-950/70 border border-amber-500/50 text-amber-200 text-xs shadow-md shadow-amber-950/40 animate-fade-in">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                  <span className="font-medium leading-relaxed">{fallbackNotice}</span>
+                </div>
+              )}
+
               {/* Primary Progress Bar: Overall Document Progress */}
               <div className="space-y-1.5">
                 <div className="flex justify-between text-[11px] text-slate-400">
@@ -996,6 +1016,17 @@ export default function App() {
                     <p className="text-xs text-slate-400 mt-0.5">Tài liệu đã được xuất ra với định dạng font Times New Roman chuẩn mực.</p>
                   </div>
                 </div>
+
+                {/* Fallback Notice on Result Card */}
+                {(result.fallback_notice || fallbackNotice) && (
+                  <div className="flex items-start gap-2.5 mb-5 p-3.5 rounded-xl bg-amber-950/50 border border-amber-600/60 text-amber-200 text-xs shadow-md">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-amber-300">Ghi chú chuyển giao bộ dịch: </span>
+                      <span>{result.fallback_notice || fallbackNotice}</span>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   {/* Mono File Card - only when PDF or both requested */}
