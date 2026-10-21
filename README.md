@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.9)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.10)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -43,7 +43,7 @@
 ### Cách 1: Tải file chạy trực tiếp (Khuyên dùng)
 1. Tải phiên bản mới nhất tại mục [Releases](https://github.com/tahiep2012/PDFTranslate/releases):
    - **File thực thi:** `PDFMathTranslate.exe`
-   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.9-windows-x64.zip`
+   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.10-windows-x64.zip`
 2. Giải nén vào một thư mục trên máy tính.
 3. Nhấp đúp chuột vào file `PDFMathTranslate.exe` (hoặc chạy `run_desktop.bat`) để mở ứng dụng.
 
@@ -81,6 +81,12 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.10] - 2026-10-21
+- **Gom cụm đoạn văn thông minh (Smart Batch Packing):** Tự động gom các đoạn văn trên cùng một trang thành 1 request duy nhất cho Gemini API, giảm tới 90% số lượng request (từ ~1.500 request/100 trang xuống còn ~100 request), tiết kiệm triệt để quota và tăng tốc độ dịch lên gấp 5-8 lần.
+- **Tự động chuyển tiếp dự phòng (Auto-Fallback) & Thông báo trực quan:** Tự động chuyển giao sang Google Translate nếu Gemini chạm giới hạn hạn mức (Quota 429), hiển thị banner cảnh báo thời gian thực và ghi chú rõ ràng trên màn hình kết quả.
+- **Khóa cứng Socket Timeout 30s & Ngắt SSE Streaming:** Thiết lập hard timeout cho kết nối socket mạng, loại bỏ hoàn toàn tình trạng kẹt tiến trình vĩnh viễn trên Windows khi dịch văn bản dài.
+- **Đóng gói độc lập nhúng tài nguyên tĩnh:** Bản build v1.0.10 nhúng 100% giao diện tĩnh vào file thực thi `.exe`, hoạt động hoàn toàn độc lập mà không cần kết nối localhost.
 
 ### [v1.0.9] - 2026-10-20
 - **Khắc phục lỗi sót câu tiếng Anh ở danh sách liệt kê (Bullets):** Loại bỏ hoàn toàn 356 mục cache lỗi cũ, bổ sung cơ chế chống nhiễm độc Cache (`Anti-Poison Cache Guard`).
