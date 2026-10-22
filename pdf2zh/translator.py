@@ -518,7 +518,7 @@ class OpenAITranslator(BaseTranslator):
         "OPENAI_STREAM": "true",  # Configurable: set to "true" (default) or "false"
         "OPENAI_STOP_TOKENS": "",  # Space separated list of stop tokens
         "OPENAI_MAX_TOKENS": -1,  # Specify -1 to call the API without setting max_tokens
-        "OPENAI_TIMEOUT": "30.0",  # Network timeout in seconds
+        "OPENAI_TIMEOUT": "60.0",  # Network timeout in seconds
     }
     CustomPrompt = True
     supports_batch = True
@@ -568,10 +568,25 @@ class OpenAITranslator(BaseTranslator):
         if len(texts) == 1:
             return [self.do_translate(texts[0])]
 
-        CHUNK_SIZE = 15
+        # Adaptive Chunking: limit both paragraph count (max 8) and total length (max 1200 chars)
+        # to ensure responses return in 3-5 seconds and never exceed API timeouts
+        chunks = []
+        curr_chunk = []
+        curr_len = 0
+        for t in texts:
+            t_len = len(t)
+            if curr_chunk and (len(curr_chunk) >= 8 or (curr_len + t_len > 1200)):
+                chunks.append(curr_chunk)
+                curr_chunk = [t]
+                curr_len = t_len
+            else:
+                curr_chunk.append(t)
+                curr_len += t_len
+        if curr_chunk:
+            chunks.append(curr_chunk)
+
         final_results = []
-        for start_idx in range(0, len(texts), CHUNK_SIZE):
-            chunk = texts[start_idx : start_idx + CHUNK_SIZE]
+        for chunk in chunks:
             chunk_results = self._translate_chunk_with_retry(chunk)
             final_results.extend(chunk_results)
         return final_results
@@ -895,16 +910,26 @@ class GeminiTranslator(OpenAITranslator):
     _quota_exhausted = False
     _fallback_page = None
     _fallback_reason = ""
+    _current_page_is_fallback = False
 
     @classmethod
     def get_fallback_status(cls):
-        if cls._quota_exhausted or cls._fallback_page is not None:
+        if cls._quota_exhausted:
             p_str = f"trang {cls._fallback_page}" if cls._fallback_page else "trang hiện tại"
             return {
                 "active": True,
+                "permanent": True,
                 "page": cls._fallback_page,
                 "reason": cls._fallback_reason or "Hết quota Gemini",
                 "message": f"Đã tự động chuyển từ Gemini sang Google Translate từ {p_str} ({cls._fallback_reason or 'do chạm hạn mức API'}).",
+            }
+        elif cls._fallback_page is not None and getattr(cls, "_current_page_is_fallback", False):
+            return {
+                "active": True,
+                "permanent": False,
+                "page": cls._fallback_page,
+                "reason": cls._fallback_reason or "Sự cố mạng tạm thời",
+                "message": f"Tạm dùng Google Translate cho trang {cls._fallback_page} do sự cố mạng; các trang sau vẫn ưu tiên Gemini.",
             }
         return None
 
@@ -913,6 +938,7 @@ class GeminiTranslator(OpenAITranslator):
         cls._quota_exhausted = False
         cls._fallback_page = None
         cls._fallback_reason = ""
+        cls._current_page_is_fallback = False
 
     def __init__(
         self, lang_in, lang_out, model, envs=None, prompt=None, ignore_cache=False
@@ -1010,11 +1036,11 @@ class GeminiTranslator(OpenAITranslator):
             openai.InternalServerError,
             openai.APITimeoutError,
         )),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1.5, min=2, max=6),
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1.5, min=2, max=8),
         before_sleep=lambda retry_state: logger.warning(
             f"Gemini API busy ({retry_state.outcome.exception()}), retrying batch in {retry_state.next_action.sleep:.1f}s... "
-            f"(Attempt {retry_state.attempt_number}/3)"
+            f"(Attempt {retry_state.attempt_number}/4)"
         ),
     )
     def _call_gemini_batch_with_retry(self, chunk: list[str]) -> list[str]:
@@ -1043,7 +1069,9 @@ class GeminiTranslator(OpenAITranslator):
     def _translate_chunk_with_retry(self, chunk: list[str]) -> list[str]:
         if not GeminiTranslator._quota_exhausted:
             try:
-                return self._call_gemini_batch_with_retry(chunk)
+                res = self._call_gemini_batch_with_retry(chunk)
+                GeminiTranslator._current_page_is_fallback = False
+                return res
             except Exception as e:
                 err_str = str(e).lower()
                 current_p = getattr(self, "current_page_idx", None)
@@ -1058,10 +1086,11 @@ class GeminiTranslator(OpenAITranslator):
                     GeminiTranslator._fallback_reason = "Hết hạn mức yêu cầu Gemini (Quota 429)"
                 else:
                     logger.warning(
-                        f"Gemini batch request failed ({e}). Auto-falling back to Google Translate."
+                        f"Gemini batch request temporary error ({e}). Using Google Translate for this block."
                     )
                     if not GeminiTranslator._fallback_reason:
                         GeminiTranslator._fallback_reason = "Sự cố mạng / lỗi kết nối Gemini"
+                GeminiTranslator._current_page_is_fallback = True
 
         if self._fallback_translator is None:
             self._fallback_translator = GoogleTranslator(
