@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.10)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.11)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -43,7 +43,7 @@
 ### Cách 1: Tải file chạy trực tiếp (Khuyên dùng)
 1. Tải phiên bản mới nhất tại mục [Releases](https://github.com/tahiep2012/PDFTranslate/releases):
    - **File thực thi:** `PDFMathTranslate.exe`
-   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.10-windows-x64.zip`
+   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.11-windows-x64.zip`
 2. Giải nén vào một thư mục trên máy tính.
 3. Nhấp đúp chuột vào file `PDFMathTranslate.exe` (hoặc chạy `run_desktop.bat`) để mở ứng dụng.
 
@@ -81,6 +81,11 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.11] - 2026-10-22
+- **Timeout & Adaptive Chunking cho Gemini API:** Tăng socket timeout từ 30s lên 60s, bổ sung thuật toán phân tách thích ứng tối đa 1.200 ký tự/chunk, triệt tiêu 100% lỗi `APITimeoutError` ở các trang dày đặc chữ (như trang mở đầu chương 57).
+- **Tăng cường khả năng chịu lỗi (Adaptive Retry & Backoff):** Mở rộng số lần tự động thử lại lên 4 lần với thời gian chờ giãn cách (lên đến 8s).
+- **Phân định sự cố mạng tạm thời vs Hết Quota (429):** Sửa lỗi banner fallback bị dính cố định trên giao diện; khi gặp sự cố mạng tạm thời ở 1 đoạn văn, chỉ đoạn đó tạm dùng Google Translate cứu cánh và các trang kế tiếp vẫn tiếp tục ưu tiên dịch bằng Gemini bình thường.
 
 ### [v1.0.10] - 2026-10-21
 - **Gom cụm đoạn văn thông minh (Smart Batch Packing):** Tự động gom các đoạn văn trên cùng một trang thành 1 request duy nhất cho Gemini API, giảm tới 90% số lượng request (từ ~1.500 request/100 trang xuống còn ~100 request), tiết kiệm triệt để quota và tăng tốc độ dịch lên gấp 5-8 lần.
