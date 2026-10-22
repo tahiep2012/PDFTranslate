@@ -191,8 +191,8 @@ export default function App() {
       if (event.payload.stage) {
         setCurrentStage(event.payload.stage);
       }
-      if (event.payload.fallback_info) {
-        setFallbackNotice(event.payload.fallback_info);
+      if (event.payload.fallback_info !== undefined) {
+        setFallbackNotice(event.payload.fallback_info || null);
       }
       setProgressMsg(event.payload.message || "Đang xử lý...");
     });
@@ -203,8 +203,8 @@ export default function App() {
       setPageProgress(100);
       setCurrentStage("done");
       setProgressMsg("Dịch tài liệu thành công!");
-      if (event.payload.fallback_notice) {
-        setFallbackNotice(event.payload.fallback_notice);
+      if (event.payload.fallback_notice !== undefined) {
+        setFallbackNotice(event.payload.fallback_notice || null);
       }
       setResult(event.payload);
     });

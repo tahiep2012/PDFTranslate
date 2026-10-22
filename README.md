@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.11)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.12)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -43,7 +43,7 @@
 ### Cách 1: Tải file chạy trực tiếp (Khuyên dùng)
 1. Tải phiên bản mới nhất tại mục [Releases](https://github.com/tahiep2012/PDFTranslate/releases):
    - **File thực thi:** `PDFMathTranslate.exe`
-   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.11-windows-x64.zip`
+   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.12-windows-x64.zip`
 2. Giải nén vào một thư mục trên máy tính.
 3. Nhấp đúp chuột vào file `PDFMathTranslate.exe` (hoặc chạy `run_desktop.bat`) để mở ứng dụng.
 
@@ -81,6 +81,10 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.12] - 2026-10-22
+- **Tự động làm sạch trạng thái thông báo dự phòng (Auto-Clearing UI Fallback Notice):** Tự động dọn dẹp banner cảnh báo màu vàng và hoàn trả tiêu đề tiến trình về trạng thái Gemini chuẩn ngay khi trang mới dịch thành công, loại bỏ triệt để hiện tượng thông báo bị dính lại màn hình khi chỉ gặp lỗi mạng tạm thời ở 1 trang đơn lẻ.
+- **Chuẩn hóa thông báo màn hình kết quả:** Phân biệt rõ sự cố mạng nhất thời và cạn kiệt hạn mức vĩnh viễn; màn hình hoàn thành chỉ cảnh báo chuyển dịch vụ khi tài liệu thực sự bị hết Quota (429), tránh gây nhầm lẫn cho người dùng.
 
 ### [v1.0.11] - 2026-10-22
 - **Timeout & Adaptive Chunking cho Gemini API:** Tăng socket timeout từ 30s lên 60s, bổ sung thuật toán phân tách thích ứng tối đa 1.200 ký tự/chunk, triệt tiêu 100% lỗi `APITimeoutError` ở các trang dày đặc chữ (như trang mở đầu chương 57).

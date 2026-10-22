@@ -999,7 +999,9 @@ class GeminiTranslator(OpenAITranslator):
     def do_translate(self, text: str) -> str:
         if not GeminiTranslator._quota_exhausted:
             try:
-                return self._call_gemini_with_retry(text)
+                res = self._call_gemini_with_retry(text)
+                GeminiTranslator._current_page_is_fallback = False
+                return res
             except Exception as e:
                 err_str = str(e).lower()
                 current_p = getattr(self, "current_page_idx", None)
@@ -1018,6 +1020,7 @@ class GeminiTranslator(OpenAITranslator):
                     )
                     if not GeminiTranslator._fallback_reason:
                         GeminiTranslator._fallback_reason = "Sự cố mạng / lỗi kết nối Gemini"
+                GeminiTranslator._current_page_is_fallback = True
 
         # Seamless fallback to Google Translate so document translation never hangs
         if self._fallback_translator is None:

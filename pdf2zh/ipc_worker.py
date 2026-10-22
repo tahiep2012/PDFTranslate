@@ -185,9 +185,17 @@ def run_translation(request_data: dict):
                 overall_val = min(0.90, 0.05 + (((cur_p - 1) + page_progress) / tot_p) * 0.85)
                 if fb and fb.get("active"):
                     fb_page = fb.get("page") or cur_p
-                    msg = f"Trang {cur_p}/{tot_p} ⚠️ [Google Translate từ trang {fb_page}]: Đang dịch đoạn {done}/{tot} ({int(page_progress * 100)}%)..."
+                    if fb.get("permanent"):
+                        msg = f"Trang {cur_p}/{tot_p} ⚠️ [Google Translate từ trang {fb_page}]: Đang dịch đoạn {done}/{tot} ({int(page_progress * 100)}%)..."
+                    else:
+                        msg = f"Trang {cur_p}/{tot_p} ⚠️ [Tạm dùng Google Translate trang {fb_page}]: Đang dịch đoạn {done}/{tot} ({int(page_progress * 100)}%)..."
+                    fallback_info = fb.get("message")
+                    fallback_page = fb.get("page")
                 else:
                     msg = f"Trang {cur_p}/{tot_p}: Đang dịch đoạn {done}/{tot} ({int(page_progress * 100)}%)..."
+                    fallback_info = None
+                    fallback_page = None
+
                 emit(
                     "progress",
                     value=overall_val,
@@ -198,8 +206,8 @@ def run_translation(request_data: dict):
                     total_sentences=tot,
                     stage="translating",
                     message=msg,
-                    fallback_info=fb.get("message") if fb else None,
-                    fallback_page=fb.get("page") if fb else None,
+                    fallback_info=fallback_info,
+                    fallback_page=fallback_page,
                 )
             elif event_type == "rendering":
                 exp_fmt = request_data.get("export_format", "both")
@@ -252,7 +260,7 @@ def run_translation(request_data: dict):
         exp_fmt = request_data.get("export_format", "both")
         emit("progress", value=1.0, stage="done", message="Hoàn thành dịch tài liệu!")
         fb_status = GeminiTranslator.get_fallback_status()
-        fallback_notice = fb_status.get("message") if fb_status else None
+        fallback_notice = fb_status.get("message") if (fb_status and fb_status.get("permanent")) else None
         emit(
             "success",
             mono=str(Path(mono_path).resolve()) if mono_path and Path(mono_path).exists() else None,

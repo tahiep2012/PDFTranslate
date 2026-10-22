@@ -640,6 +640,8 @@ class TranslateConverter(PDFConverterEx):
             t_pages = getattr(self, "total_pages", 1)
             if hasattr(self, "translator") and self.translator:
                 setattr(self.translator, "current_page_idx", p_idx)
+                if not getattr(self.translator, "_quota_exhausted", False):
+                    setattr(self.translator, "_current_page_is_fallback", False)
             is_skip, bp, tp, s_clean = pre_clean_paragraph(s)
             if is_skip or not s_clean:
                 with done_lock:
@@ -668,6 +670,8 @@ class TranslateConverter(PDFConverterEx):
             p_idx = getattr(self, "current_page_idx", 1)
             if hasattr(self, "translator") and self.translator:
                 setattr(self.translator, "current_page_idx", p_idx)
+                if not getattr(self.translator, "_quota_exhausted", False):
+                    setattr(self.translator, "_current_page_is_fallback", False)
 
             pre_items = [pre_clean_paragraph(s) for s in sstk]
             to_trans_indices = []
