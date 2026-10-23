@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.13)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.14)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -43,7 +43,7 @@
 ### Cách 1: Tải file chạy trực tiếp (Khuyên dùng)
 1. Tải phiên bản mới nhất tại mục [Releases](https://github.com/tahiep2012/PDFTranslate/releases):
    - **File thực thi:** `PDFMathTranslate.exe`
-   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.13-windows-x64.zip`
+   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.14-windows-x64.zip`
 2. Giải nén vào một thư mục trên máy tính.
 3. Nhấp đúp chuột vào file `PDFMathTranslate.exe` (hoặc chạy `run_desktop.bat`) để mở ứng dụng.
 
@@ -81,6 +81,14 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.14] - 2026-10-23
+- **Căn giữa hình học & Chữ in hoa tiêu đề chuẩn xác (Geometric Centering & Title All-Caps):**
+  - Thay thế hoàn toàn ngưỡng chiều rộng ước lượng 55% bằng thuật toán đo độ đối xứng trục toán học $|(x_0+x_1)/2 - page\_mid| \le 5.5\text{ pt}$ trên toàn bộ các dòng của khối văn bản, căn giữa hoàn hảo tựa đề sách và các đề mục trang trọng.
+  - Tự động nhận diện chữ in hoa từ văn bản gốc ($\ge 80\%$) và chuyển đổi bản dịch sang chữ in hoa tiếng Việt toàn vẹn dấu thanh.
+- **Bảo toàn định dạng nội dòng chuẩn xác (Inline Markdown & Dynamic Font Switching):**
+  - Khắc phục triệt để lỗi biến toàn bộ khối văn bản thành 100% in nghiêng hoặc in đậm khi trong đoạn chỉ chứa một vài từ ngoại ngữ (*samue*, *tai*, *Mottainai*) hoặc 1 câu khẳng định in đậm.
+  - Tự động bao bọc markdown `*...*` và `**...**` vào chuỗi dịch để mô hình AI bảo tồn ngữ cảnh, đồng thời chuyển đổi font chữ động cấp từ (`noto_italic`, `noto_bold`) khi kết xuất PDF mà không để lộ ký tự sao `*` thô.
 
 ### [v1.0.13] - 2026-10-23
 - **Tích hợp mô hình AI dịch thuật Meta NLLB-200 (Offline):** Bổ sung tùy chọn dịch thuật bằng mạng nơ-ron hàng đầu từ Meta (`facebook/nllb-200-distilled-600M`), dịch hoàn toàn cục bộ (100% Offline), không cần kết nối Internet, không tốn phí hay giới hạn API, hỗ trợ 200 ngôn ngữ.

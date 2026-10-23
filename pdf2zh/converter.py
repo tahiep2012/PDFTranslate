@@ -133,13 +133,30 @@ class Paragraph:
         self.line_end_xs: list[float] = []
         self.is_justified: bool = False
         self.is_centered: bool = False
+        self.is_all_caps: bool = False
         self.is_toc_item: bool = False
         self.is_italic: bool = False
         self.is_bold: bool = False
+        self.lines_geom: list[tuple[float, float]] = []
+        self.curr_line_x0: float = x0
+        self.char_runs: list[list] = []
         self.color = None
         self.sample_color = None
+        self.italic_char_count: int = 0
+        self.bold_char_count: int = 0
         self.colored_char_count: int = 0
         self.total_char_count: int = 0
+
+
+class StyledStr(str):
+    is_it: bool = False
+    is_bd: bool = False
+
+    def __new__(cls, val, is_it=False, is_bd=False):
+        obj = str.__new__(cls, val)
+        obj.is_it = is_it
+        obj.is_bd = is_bd
+        return obj
 
 
 # fmt: off
@@ -339,6 +356,8 @@ class TranslateConverter(PDFConverterEx):
                         if sstk[-1] == "":
                             xt_cls = -1 # 禁止纯公式段落（sstk[-1]=="{v*}"）的后续连接，但是要考虑新字符和后续字符的连接，所以这里修改的是上个字符的类别
                         sstk[-1] += f"{{v{len(var)}}}"
+                        if pstk and pstk[-1].char_runs:
+                            pstk[-1].char_runs.append([f"{{v{len(var)}}}", False, False])
                         var.append(vstk)
                         varl.append(vlstk)
                         varf.append(vfix)
@@ -429,36 +448,47 @@ class TranslateConverter(PDFConverterEx):
                         if child.x0 > xt.x1 + space_threshold:    # 添加行内空格
                             if sstk and not sstk[-1].endswith(" ") and child.get_text() != " ":
                                 sstk[-1] += " "
+                                if pstk and pstk[-1].char_runs:
+                                    pstk[-1].char_runs[-1][0] += " "
                         elif child.x1 < xt.x0:      # 添加换行空格并标记原文段落存在换行
                             if sstk and not sstk[-1].endswith(" ") and child.get_text() != " ":
                                 sstk[-1] += " "
+                                if pstk and pstk[-1].char_runs:
+                                    pstk[-1].char_runs[-1][0] += " "
                             pstk[-1].brk = True
                             pstk[-1].line_breaks += 1
                             pstk[-1].line_end_xs.append(xt.x1)
+                            if len(pstk[-1].lines_geom) <= pstk[-1].line_breaks:
+                                pstk[-1].lines_geom.append((pstk[-1].curr_line_x0, xt.x1))
+                            pstk[-1].curr_line_x0 = child.x0
                     else:                           # 根据当前字符构建一个新的段落
+                        if pstk and xt:
+                            if len(pstk[-1].lines_geom) <= pstk[-1].line_breaks:
+                                pstk[-1].lines_geom.append((pstk[-1].curr_line_x0, xt.x1))
                         sstk.append("")
                         new_p = Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False)
                         new_p.is_in_table = is_in_table
-                        if not child.get_text().isspace():
-                            new_p.is_italic = ch_is_italic
-                            new_p.is_bold = ch_is_bold
-                            if ch_color:
-                                new_p.sample_color = ch_color
-                                new_p.colored_char_count += 1
-                            new_p.total_char_count += 1
+                        new_p.curr_line_x0 = child.x0
                         pstk.append(new_p)
                 if not cur_v:                                               # 文字入栈
                     ch_txt = child.get_text()
                     is_punc = ch_txt in "’'\"”‘.,:;!?-–— \t\r\n"
                     if not is_punc and ch_txt != " ":
                         if ch_is_italic:
-                            pstk[-1].is_italic = True
+                            pstk[-1].italic_char_count += 1
                         if ch_is_bold:
-                            pstk[-1].is_bold = True
+                            pstk[-1].bold_char_count += 1
                         if ch_color:
                             pstk[-1].sample_color = ch_color
                             pstk[-1].colored_char_count += 1
                         pstk[-1].total_char_count += 1
+
+                    # Record character run for inline formatting
+                    runs = pstk[-1].char_runs
+                    if runs and runs[-1][1] == ch_is_italic and runs[-1][2] == ch_is_bold:
+                        runs[-1][0] += ch_txt
+                    else:
+                        runs.append([ch_txt, ch_is_italic, ch_is_bold])
                     if (                                                    # 根据当前字符修正段落属性
                         (child.size > pstk[-1].size and not is_punc and len(sstk[-1].strip()) <= 2)  # 1. 仅在段落开头允许首字放大
                         or len(sstk[-1].strip()) == 1                       # 2. 当前字符为段落第二个文字（考虑首字母放大的情况）
@@ -500,9 +530,14 @@ class TranslateConverter(PDFConverterEx):
         # 处理结尾
         if vstk:    # 公式出栈
             sstk[-1] += f"{{v{len(var)}}}"
+            if pstk and pstk[-1].char_runs:
+                pstk[-1].char_runs.append([f"{{v{len(var)}}}", False, False])
             var.append(vstk)
             varl.append(vlstk)
             varf.append(vfix)
+        if pstk and xt:
+            if len(pstk[-1].lines_geom) <= pstk[-1].line_breaks:
+                pstk[-1].lines_geom.append((pstk[-1].curr_line_x0, xt.x1))
         log.debug("\n==========[VSTACK]==========\n")
         for id, v in enumerate(var):  # 计算公式宽度
             l = max([vch.x1 for vch in v]) - v[0].x0
@@ -512,6 +547,27 @@ class TranslateConverter(PDFConverterEx):
         # Post-process paragraphs: TOC item, center alignment, color thresholding, and justification
         page_mid = ltpage.width / 2.0
         BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·", "–", "—"}
+
+        def wrap_markdown(text: str, is_it: bool, is_bd: bool) -> str:
+            if not (is_it or is_bd):
+                return text
+            lead = len(text) - len(text.lstrip())
+            trail = len(text) - len(text.rstrip())
+            lead_sp = text[:lead]
+            core = text[lead:len(text)-trail] if trail > 0 else text[lead:]
+            trail_sp = text[len(text)-trail:] if trail > 0 else ""
+            if not core:
+                return text
+            punc_match = re.search(r"([.,:;!?]+)$", core)
+            trail_punc = ""
+            if punc_match:
+                trail_punc = punc_match.group(1)
+                core = core[:-len(trail_punc)]
+            if not core:
+                return text
+            tag = "***" if (is_it and is_bd) else ("**" if is_bd else "*")
+            return f"{lead_sp}{tag}{core}{tag}{trail_punc}{trail_sp}"
+
         for idx, p in enumerate(pstk):
             s = sstk[idx].rstrip()
             # TOC item detection fallback
@@ -524,24 +580,43 @@ class TranslateConverter(PDFConverterEx):
             else:
                 p.color = None
 
-            # Center alignment detection:
-            # ONLY for narrow text blocks (like poems, epigraphs, dedications, short titles).
-            # Body text spanning the column (width >= 0.55 * page_width) is NEVER centered.
+            # All-caps detection (e.g. BOOK TITLE, CHAPTER HEADING)
+            alpha_chars = [c for c in s if c.isalpha()]
+            if len(alpha_chars) >= 4:
+                upper_ratio = sum(1 for c in alpha_chars if c.isupper()) / len(alpha_chars)
+                if upper_ratio >= 0.80:
+                    p.is_all_caps = True
+
+            # Style (Italic / Bold) thresholding & Inline Markdown reconstruction
+            tot_chars = p.total_char_count
+            it_ratio = (p.italic_char_count / tot_chars) if tot_chars > 0 else 0.0
+            bd_ratio = (p.bold_char_count / tot_chars) if tot_chars > 0 else 0.0
+
+            if it_ratio >= 0.70:
+                p.is_italic = True
+            if bd_ratio >= 0.70:
+                p.is_bold = True
+
+            if p.char_runs and ((0 < it_ratio < 0.70) or (0 < bd_ratio < 0.70)):
+                p.is_italic = False
+                p.is_bold = False
+                reconstructed = [wrap_markdown(run[0], run[1], run[2]) for run in p.char_runs]
+                rec_str = "".join(reconstructed)
+                if rec_str.strip():
+                    sstk[idx] = rec_str
+
+            # Geometric Center Alignment Detection
             is_bullet_p = any(s.lstrip().startswith(b) for b in BULLET_CHARS)
-            is_body_width = (p.x1 - p.x0) >= 0.55 * ltpage.width
-            left_m = p.x0
-            right_m = ltpage.width - p.x1
-            is_balanced = abs(left_m - right_m) < 25.0
-            p_mid = (p.x0 + p.x1) / 2.0
-            if (
-                not is_bullet_p
-                and not is_body_width
-                and is_balanced
-                and abs(p_mid - page_mid) < 25.0
-                and left_m > 40.0
-                and right_m > 40.0
-            ):
-                p.is_centered = True
+            if not is_bullet_p and not getattr(p, "is_in_table", False):
+                if p.lines_geom and len(p.lines_geom) >= 2:
+                    line_diffs = [abs((lx0 + lx1) / 2.0 - page_mid) for lx0, lx1 in p.lines_geom]
+                    if all(d <= 5.5 for d in line_diffs):
+                        p.is_centered = True
+                elif p.lines_geom and len(p.lines_geom) == 1:
+                    lx0, lx1 = p.lines_geom[0]
+                    line_w = lx1 - lx0
+                    if abs((lx0 + lx1) / 2.0 - page_mid) <= 5.5 and lx0 > 45.0 and line_w < (ltpage.width - 90.0):
+                        p.is_centered = True
 
             # Detect paragraph justification (căn đều hai bên) from original lines
             line_w = p.x1 - p.x0
@@ -620,7 +695,7 @@ class TranslateConverter(PDFConverterEx):
 
             return False, bullet_prefix, toc_page_suffix, s_clean
 
-        def post_process_translation(new_text: str, bullet_prefix: str, toc_page_suffix: str) -> str:
+        def post_process_translation(new_text: str, bullet_prefix: str, toc_page_suffix: str, is_all_caps: bool = False) -> str:
             if new_text:
                 new_text = unicodedata.normalize("NFC", new_text)
                 new_text = re.sub(r"(?i)^(source|original|translated)\s*text:\s*", "", new_text).strip()
@@ -628,6 +703,8 @@ class TranslateConverter(PDFConverterEx):
                 if m_trans:
                     new_text = m_trans.group(1).strip()
                 new_text = new_text.replace("\x00", "").replace("\ufeff", "").strip()
+                if is_all_caps:
+                    new_text = new_text.upper()
             if bullet_prefix:
                 new_text = bullet_prefix + (new_text or "")
             if toc_page_suffix:
@@ -635,8 +712,10 @@ class TranslateConverter(PDFConverterEx):
             return new_text
 
         @retry(wait=wait_fixed(2), stop=stop_after_attempt(3), retry=retry_if_exception(is_recoverable_error))
-        def worker(s: str):  # 多线程翻译 (Fallback or per-paragraph engine)
+        def worker(item):  # 多线程翻译 (Fallback or per-paragraph engine)
             nonlocal done_s
+            idx, s = item
+            p_obj = pstk[idx]
             p_idx = getattr(self, "current_page_idx", 1)
             t_pages = getattr(self, "total_pages", 1)
             if hasattr(self, "translator") and self.translator:
@@ -651,7 +730,7 @@ class TranslateConverter(PDFConverterEx):
                 return s
             try:
                 new = self.translator.translate(s_clean)
-                new = post_process_translation(new, bp, tp)
+                new = post_process_translation(new, bp, tp, is_all_caps=p_obj.is_all_caps)
                 with done_lock:
                     done_s += 1
                     notify_progress()
@@ -696,7 +775,9 @@ class TranslateConverter(PDFConverterEx):
                     batch_res = self.translator.translate_batch(to_trans_texts)
                     for idx, trans_raw in zip(to_trans_indices, batch_res):
                         _, bp, tp, _ = pre_items[idx]
-                        news[idx] = post_process_translation(trans_raw or sstk[idx], bp, tp)
+                        news[idx] = post_process_translation(
+                            trans_raw or sstk[idx], bp, tp, is_all_caps=pstk[idx].is_all_caps
+                        )
                         with done_lock:
                             done_s += 1
                             notify_progress()
@@ -710,7 +791,7 @@ class TranslateConverter(PDFConverterEx):
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=self.thread
             ) as executor:
-                future_to_idx = {executor.submit(worker, s): i for i, s in enumerate(sstk)}
+                future_to_idx = {executor.submit(worker, (i, s)): i for i, s in enumerate(sstk)}
                 news = [None] * len(sstk)
                 for future in concurrent.futures.as_completed(future_to_idx):
                     idx = future_to_idx[future]
@@ -785,12 +866,48 @@ class TranslateConverter(PDFConverterEx):
                 adv = self.fontmap[fcur_].char_width(ord(ch)) * size
             return fcur_, adv
 
-        def tokenize(text: str) -> list[str]:
-            pattern = re.compile(
+        def tokenize(text: str) -> list[StyledStr]:
+            md_pattern = re.compile(
+                r"(\*\*\*(?=\S)(.+?)(?<=\S)\*\*\*|\*\*(?=\S)(.+?)(?<=\S)\*\*|\*(?=\S)(.+?)(?<=\S)\*)",
+                re.DOTALL,
+            )
+            sub_pattern = re.compile(
                 r"(\{\s*v[\d\s]+\}|[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]|[\s]+|[^\s\{\}\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+)",
                 re.IGNORECASE,
             )
-            return [m.group(0) for m in pattern.finditer(text) if m.group(0)]
+            tokens = []
+            last_end = 0
+            for m in md_pattern.finditer(text):
+                start, end = m.span()
+                if start > last_end:
+                    plain = text[last_end:start]
+                    for subtok in sub_pattern.finditer(plain):
+                        val = subtok.group(0)
+                        if val:
+                            tokens.append(StyledStr(val, False, False))
+                full = m.group(1)
+                if full.startswith("***") and full.endswith("***"):
+                    inner = full[3:-3]
+                    is_it, is_bd = True, True
+                elif full.startswith("**") and full.endswith("**"):
+                    inner = full[2:-2]
+                    is_it, is_bd = False, True
+                else:
+                    inner = full[1:-1]
+                    is_it, is_bd = True, False
+                for subtok in sub_pattern.finditer(inner):
+                    val = subtok.group(0)
+                    if val:
+                        tokens.append(StyledStr(val, is_it, is_bd))
+                last_end = end
+
+            if last_end < len(text):
+                plain = text[last_end:]
+                for subtok in sub_pattern.finditer(plain):
+                    val = subtok.group(0)
+                    if val:
+                        tokens.append(StyledStr(val, False, False))
+            return tokens
 
         def layout_paragraph_tokens(tokens, p_obj, cur_size):
             p_x0 = p_obj.x0
@@ -816,19 +933,21 @@ class TranslateConverter(PDFConverterEx):
             fcur = None
             word_counter = 0
 
-            def push_word_internal(w_str, t_x, l_idx, w_id, color=None):
+            def push_word_internal(w_str, t_x, l_idx, w_id, color=None, is_italic=False, is_bold=False):
                 cur_f = None
                 cur_chunk = ""
                 cur_tx = t_x
                 c_x = t_x
                 eff_color = color if color is not None else p_col
+                eff_it = is_it or is_italic
+                eff_bd = is_bd or is_bold
                 for c in w_str:
-                    f_, a_ = get_char_info(c, cur_size, is_italic=is_it, is_bold=is_bd)
+                    f_, a_ = get_char_info(c, cur_size, is_italic=eff_it, is_bold=eff_bd)
                     if cur_f is None:
                         cur_f = f_
                         cur_chunk = c
                     elif f_ != cur_f:
-                        w_ = sum(get_char_info(ch, cur_size, is_italic=is_it, is_bold=is_bd)[1] for ch in cur_chunk)
+                        w_ = sum(get_char_info(ch, cur_size, is_italic=eff_it, is_bold=eff_bd)[1] for ch in cur_chunk)
                         ops_vals.append({
                             "type": OpType.TEXT,
                             "font": cur_f,
@@ -848,7 +967,7 @@ class TranslateConverter(PDFConverterEx):
                         cur_chunk += c
                     c_x += a_
                 if cur_chunk:
-                    w_ = sum(get_char_info(ch, cur_size, is_italic=is_it, is_bold=is_bd)[1] for ch in cur_chunk)
+                    w_ = sum(get_char_info(ch, cur_size, is_italic=eff_it, is_bold=eff_bd)[1] for ch in cur_chunk)
                     ops_vals.append({
                         "type": OpType.TEXT,
                         "font": cur_f,
@@ -879,14 +998,16 @@ class TranslateConverter(PDFConverterEx):
                     cur_x = p_obj.x0
                     w_id = 0
                     for tok in title_tokens:
+                        tok_it = is_it or getattr(tok, "is_it", False)
+                        tok_bd = is_bd or getattr(tok, "is_bd", False)
                         if tok.isspace():
-                            _, adv = get_char_info(" ", cur_size, is_italic=is_it, is_bold=is_bd)
+                            _, adv = get_char_info(" ", cur_size, is_italic=tok_it, is_bold=tok_bd)
                             cur_x += adv
                             continue
-                        char_infos = [get_char_info(c, cur_size, is_italic=is_it, is_bold=is_bd) for c in tok]
+                        char_infos = [get_char_info(c, cur_size, is_italic=tok_it, is_bold=tok_bd) for c in tok]
                         w_w = sum(adv for _, adv in char_infos)
                         w_id += 1
-                        push_word_internal(tok, cur_x, 0, w_id, color=p_col)
+                        push_word_internal(tok, cur_x, 0, w_id, color=p_col, is_italic=tok_it, is_bold=tok_bd)
                         cur_x += w_w
 
                     title_end_x = cur_x
@@ -961,7 +1082,9 @@ class TranslateConverter(PDFConverterEx):
                 if tok.isspace():
                     if cur_x <= p_x0 + 0.1 * cur_size:
                         continue
-                    _, adv = get_char_info(" ", cur_size, is_italic=is_it, is_bold=is_bd)
+                    tok_it = is_it or getattr(tok, "is_it", False)
+                    tok_bd = is_bd or getattr(tok, "is_bd", False)
+                    _, adv = get_char_info(" ", cur_size, is_italic=tok_it, is_bold=tok_bd)
                     cell_wrap = is_in_table and (p_x1 < ltpage.width - 72.0) and (cur_x + adv > p_x1 + 0.1 * cur_size)
                     should_wrap_sp = (
                         ((p_brk or cell_wrap) and cur_x + adv > p_x1 + 0.1 * cur_size)
@@ -979,7 +1102,9 @@ class TranslateConverter(PDFConverterEx):
                 is_url_tok = bool(re.search(r"^(https?://|www\.)", tok))
                 tok_color = (0.0, 0.2, 0.85) if is_url_tok else p_col
 
-                char_infos = [get_char_info(c, cur_size, is_italic=is_it, is_bold=is_bd) for c in tok]
+                tok_it = is_it or getattr(tok, "is_it", False)
+                tok_bd = is_bd or getattr(tok, "is_bd", False)
+                char_infos = [get_char_info(c, cur_size, is_italic=tok_it, is_bold=tok_bd) for c in tok]
                 word_width = sum(adv for _, adv in char_infos)
 
                 cell_wrap = is_in_table and (p_x1 < ltpage.width - 72.0) and (cur_x + word_width > p_x1 + 0.1 * cur_size)
@@ -993,7 +1118,7 @@ class TranslateConverter(PDFConverterEx):
                     lidx += 1
 
                 word_counter += 1
-                push_word_internal(tok, cur_x, lidx, word_counter, color=tok_color)
+                push_word_internal(tok, cur_x, lidx, word_counter, color=tok_color, is_italic=tok_it, is_bold=tok_bd)
                 cur_x += word_width
 
             return ops_vals, lidx
