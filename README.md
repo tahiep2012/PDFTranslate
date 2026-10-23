@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.15)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.16)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -81,6 +81,12 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.16] - 2026-10-23
+- **Căn giữa đồng trục nội tại & Tự thích ứng lề lệch gáy sách (Coaxial Self-Centering & Gutter Margin Adaptation):**
+  - Khắc phục triệt để lỗi dòng ngắn bị dạt sang trái trong tiêu đề nhiều dòng và các trang lời đề tặng (như *Building Design Systems* -> `kế tòa nhà`, *To the craft...* -> `công.`, `nó.`).
+  - Thay thế việc so sánh cứng với tâm trang giấy vật lý bằng thuật toán đo độ đồng trục nội tại giữa các dòng trong cùng một khối ($\max(mid_i) - \min(mid_i) \le 6.5\text{ pt}$), tự động thích ứng với các sách in có lề gáy sách (inner margin) lệch sang một bên.
+  - Bảo toàn trục đối xứng ban đầu của khối văn bản khi xuất bản dịch tiếng Việt, đảm bảo mọi dòng ngắn luôn nằm ngay chính giữa bên dưới dòng dài với độ chính xác tọa độ tuyệt đối.
 
 ### [v1.0.15] - 2026-10-23
 - **Hỗ trợ toàn diện chữ Vừa In Đậm Vừa In Nghiêng (Bold-Italic Typography Support):**

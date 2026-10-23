@@ -133,6 +133,7 @@ class Paragraph:
         self.line_end_xs: list[float] = []
         self.is_justified: bool = False
         self.is_centered: bool = False
+        self.center_axis: float = None
         self.is_all_caps: bool = False
         self.is_toc_item: bool = False
         self.is_italic: bool = False
@@ -606,18 +607,32 @@ class TranslateConverter(PDFConverterEx):
                 if rec_str.strip():
                     sstk[idx] = rec_str
 
-            # Geometric Center Alignment Detection
+            # Geometric Center Alignment Detection (Self-Centering Coaxial Detection)
             is_bullet_p = any(s.lstrip().startswith(b) for b in BULLET_CHARS)
             if not is_bullet_p and not getattr(p, "is_in_table", False):
                 if p.lines_geom and len(p.lines_geom) >= 2:
-                    line_diffs = [abs((lx0 + lx1) / 2.0 - page_mid) for lx0, lx1 in p.lines_geom]
-                    if all(d <= 5.5 for d in line_diffs):
+                    mids = [(lx0 + lx1) / 2.0 for lx0, lx1 in p.lines_geom]
+                    widths = [lx1 - lx0 for lx0, lx1 in p.lines_geom]
+                    mid_spread = max(mids) - min(mids)
+                    width_spread = max(widths) - min(widths)
+                    avg_mid = sum(mids) / len(mids)
+
+                    # Coaxial self-centering: all lines in this paragraph share the same vertical center axis
+                    if mid_spread <= 6.5 and max(widths) < ltpage.width - 40.0:
+                        if width_spread >= 12.0 or abs(avg_mid - page_mid) <= ltpage.width * 0.15:
+                            p.is_centered = True
+                            p.center_axis = avg_mid
+                    elif all(abs(m - page_mid) <= 8.0 for m in mids):
                         p.is_centered = True
+                        p.center_axis = page_mid
                 elif p.lines_geom and len(p.lines_geom) == 1:
                     lx0, lx1 = p.lines_geom[0]
-                    line_w = lx1 - lx0
-                    if abs((lx0 + lx1) / 2.0 - page_mid) <= 5.5 and lx0 > 45.0 and line_w < (ltpage.width - 90.0):
-                        p.is_centered = True
+                    w = lx1 - lx0
+                    mid = (lx0 + lx1) / 2.0
+                    if w < ltpage.width - 60.0 and lx0 >= 35.0 and (ltpage.width - lx1) >= 35.0:
+                        if abs(mid - page_mid) <= 20.0 and abs(lx0 - (ltpage.width - lx1)) <= 36.0:
+                            p.is_centered = True
+                            p.center_axis = page_mid if abs(mid - page_mid) <= 6.0 else mid
 
             # Detect paragraph justification (căn đều hai bên) from original lines
             line_w = p.x1 - p.x0
@@ -1203,7 +1218,7 @@ class TranslateConverter(PDFConverterEx):
 
             # 3.5 Apply horizontal centering if original was centered
             if p.is_centered and ops_vals:
-                page_center = ltpage.width / 2.0
+                page_center = getattr(p, "center_axis", None) or (ltpage.width / 2.0)
                 max_lidx = max(v.get("lidx", 0) for v in ops_vals)
                 for l in range(max_lidx + 1):
                     line_ops = [v for v in ops_vals if v.get("lidx") == l and v.get("type") == OpType.TEXT]
