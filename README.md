@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.14)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.15)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -81,6 +81,15 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.15] - 2026-10-23
+- **Hỗ trợ toàn diện chữ Vừa In Đậm Vừa In Nghiêng (Bold-Italic Typography Support):**
+  - Tích hợp font chữ `timesbi.ttf` / `arialbi.ttf` (`noto_bold_italic`) vào bộ nạp font hệ thống, xử lý hoàn hảo các tiêu đề sách và cụm từ kết hợp cả 2 định dạng đậm + nghiêng (như *Selecting a Samue*, *Looking After Your Samue*, *Taking Care of Your Tenugui Towels*).
+  - Tối ưu thứ tự ưu tiên nhận diện font trong `get_char_info` và `raw_string`, bảo toàn trọn vẹn kiểu dáng chữ vừa in đậm vừa in nghiêng mà không bị rớt về in nghiêng đơn thuần.
+  - Tự động bỏ qua nén font con (`skip_subset_fonts = True`) khi xuất bản dịch tiếng Việt, loại bỏ triệt để lỗi rụng ký tự (`KeyError: 'post'`) từ bộ mã nguồn Windows TrueType font.
+- **Khắc phục lỗi mất chữ & ngắt vụn câu ở dấu gạch ngang (En-dash Mid-line Preservation):**
+  - Loại bỏ điều kiện ngắt đoạn giữa dòng đối với các ký tự dấu gạch ngang en-dash (`"–"`, `"—"`).
+  - Khắc phục triệt để lỗi phân mảnh câu ở các mốc thời gian hoặc dải số (như `Senrikyuu (1522–91)`), đảm bảo toàn bộ câu văn được giữ nguyên vẹn 100% trên một khối văn bản liên tục, không bị đứt câu hay chèn dấu chấm ngắt đoạn sai lệch.
 
 ### [v1.0.14] - 2026-10-23
 - **Căn giữa hình học & Chữ in hoa tiêu đề chuẩn xác (Geometric Centering & Title All-Caps):**

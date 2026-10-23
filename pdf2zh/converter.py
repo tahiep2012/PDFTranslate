@@ -179,6 +179,7 @@ class TranslateConverter(PDFConverterEx):
         callback=None,
         noto_italic: Font = None,
         noto_bold: Font = None,
+        noto_bold_italic: Font = None,
     ) -> None:
         super().__init__(rsrcmgr)
         self.vfont = vfont
@@ -189,8 +190,10 @@ class TranslateConverter(PDFConverterEx):
         self.noto = noto
         self.noto_italic = noto_italic
         self.noto_bold = noto_bold
+        self.noto_bold_italic = noto_bold_italic
         self.noto_italic_name = "noto_italic" if noto_italic else None
         self.noto_bold_name = "noto_bold" if noto_bold else None
+        self.noto_bold_italic_name = "noto_bold_italic" if noto_bold_italic else None
         self.callback = callback
         self.table_boxes = {}
         self.translator: BaseTranslator = None
@@ -368,10 +371,8 @@ class TranslateConverter(PDFConverterEx):
                 if not vstk:
                     is_new_para = False
                     is_in_table = cls in getattr(self, "table_boxes", {}).get(ltpage.pageid, set())
-                    BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·", "–", "—"}
+                    BULLET_CHARS = {"•", "▪", "▸", "►", "○", "●", "■", "◆", "◇", "·"}
                     if cls != xt_cls:
-                        is_new_para = True
-                    elif child.get_text() in BULLET_CHARS and not child.get_text().isspace():
                         is_new_para = True
                     elif is_in_table and xt is not None and (child.x0 - xt.x1 >= max(10.0, child.size * 0.8)) and abs(child.y0 - xt.y0) < max(6.0, child.size * 0.6):
                         # Table column separator: gap between words on the same row across table columns
@@ -809,6 +810,8 @@ class TranslateConverter(PDFConverterEx):
         def raw_string(fcur: str, cstk: str):  # 编码字符串
             if fcur == self.noto_name:
                 return "".join(["%04x" % self.noto.has_glyph(ord(c)) for c in cstk])
+            elif fcur == getattr(self, "noto_bold_italic_name", None) and getattr(self, "noto_bold_italic", None):
+                return "".join(["%04x" % self.noto_bold_italic.has_glyph(ord(c)) for c in cstk])
             elif fcur == getattr(self, "noto_italic_name", None) and self.noto_italic:
                 return "".join(["%04x" % self.noto_italic.has_glyph(ord(c)) for c in cstk])
             elif fcur == getattr(self, "noto_bold_name", None) and self.noto_bold:
@@ -837,7 +840,9 @@ class TranslateConverter(PDFConverterEx):
         def get_char_info(ch: str, size: float, is_italic: bool = False, is_bold: bool = False):
             fcur_ = None
             if self.translator.lang_out.lower() in ["vi", "vietnamese"]:
-                if is_italic and self.noto_italic and self.noto_italic.has_glyph(ord(ch)):
+                if is_italic and is_bold and getattr(self, "noto_bold_italic", None) and self.noto_bold_italic.has_glyph(ord(ch)):
+                    fcur_ = self.noto_bold_italic_name
+                elif is_italic and self.noto_italic and self.noto_italic.has_glyph(ord(ch)):
                     fcur_ = self.noto_italic_name
                 elif is_bold and self.noto_bold and self.noto_bold.has_glyph(ord(ch)):
                     fcur_ = self.noto_bold_name
@@ -850,7 +855,9 @@ class TranslateConverter(PDFConverterEx):
                 except Exception:
                     pass
             if fcur_ is None:
-                if is_italic and self.noto_italic:
+                if is_italic and is_bold and getattr(self, "noto_bold_italic", None):
+                    fcur_ = self.noto_bold_italic_name
+                elif is_italic and self.noto_italic:
                     fcur_ = self.noto_italic_name
                 elif is_bold and self.noto_bold:
                     fcur_ = self.noto_bold_name
@@ -858,6 +865,8 @@ class TranslateConverter(PDFConverterEx):
                     fcur_ = self.noto_name
             if fcur_ == self.noto_name:
                 adv = self.noto.char_lengths(ch, size)[0]
+            elif fcur_ == getattr(self, "noto_bold_italic_name", None) and getattr(self, "noto_bold_italic", None):
+                adv = self.noto_bold_italic.char_lengths(ch, size)[0]
             elif fcur_ == getattr(self, "noto_italic_name", None) and self.noto_italic:
                 adv = self.noto_italic.char_lengths(ch, size)[0]
             elif fcur_ == getattr(self, "noto_bold_name", None) and self.noto_bold:
