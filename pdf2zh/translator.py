@@ -1382,6 +1382,104 @@ class MarianTranslator(BaseTranslator):
         return remove_control_characters(res)
 
 
+FLORES_LANG_MAP = {
+    "en": "eng_Latn",
+    "vi": "vie_Latn",
+    "zh": "zho_Hans",
+    "zh-cn": "zho_Hans",
+    "zh-tw": "zho_Hant",
+    "ja": "jpn_Jpan",
+    "ko": "kor_Hang",
+    "fr": "fra_Latn",
+    "de": "deu_Latn",
+    "es": "spa_Latn",
+    "ru": "rus_Cyrl",
+    "it": "ita_Latn",
+    "pt": "por_Latn",
+    "th": "tha_Thai",
+    "id": "ind_Latn",
+    "ar": "arb_Arab",
+    "hi": "hin_Deva",
+    "nl": "nld_Latn",
+    "pl": "pol_Latn",
+    "tr": "tur_Latn",
+    "uk": "ukr_Cyrl",
+}
+
+
+class NLLBTranslator(BaseTranslator):
+    name = "nllb"
+    supports_batch = True
+    _cached_models = {}
+
+    def __init__(self, lang_in, lang_out, model=None, envs=None, prompt=None, ignore_cache=False, **kwargs):
+        super().__init__(lang_in, lang_out, model, ignore_cache)
+        self.raw_lang_in = lang_in.lower()
+        self.raw_lang_out = lang_out.lower()
+        self.src_lang = FLORES_LANG_MAP.get(self.raw_lang_in, self.raw_lang_in)
+        self.tgt_lang = FLORES_LANG_MAP.get(self.raw_lang_out, self.raw_lang_out)
+
+        self.model_name = model if model else "facebook/nllb-200-distilled-600M"
+        self._ensure_loaded()
+
+    def _ensure_loaded(self):
+        if self.model_name in NLLBTranslator._cached_models:
+            self.tokenizer, self.model, self.device = NLLBTranslator._cached_models[self.model_name]
+            return
+
+        try:
+            from transformers import AutoModelForSeq2SeqLM, NllbTokenizerFast
+            import torch
+        except ImportError:
+            raise ImportError("Vui lòng cài đặt: pip install transformers torch tokenizers")
+
+        # Ensure model cache is strictly placed on D:\Antigravity\PDFTranslate\models\nllb to protect Drive C
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        nllb_cache_dir = os.path.join(project_root, "models", "nllb")
+        os.makedirs(nllb_cache_dir, exist_ok=True)
+        os.environ["HF_HOME"] = os.path.join(project_root, "models", "huggingface")
+
+        logger.info(f"Loading Meta NLLB-200 model: {self.model_name} into {nllb_cache_dir}...")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        tokenizer = NllbTokenizerFast.from_pretrained(self.model_name, src_lang=self.src_lang, cache_dir=nllb_cache_dir)
+        model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name, cache_dir=nllb_cache_dir)
+        model.to(device)
+        model.eval()
+        NLLBTranslator._cached_models[self.model_name] = (tokenizer, model, device)
+        self.tokenizer = tokenizer
+        self.model = model
+        self.device = device
+
+    def do_translate(self, text: str) -> str:
+        results = self.do_translate_batch([text])
+        return results[0] if results else ""
+
+    def do_translate_batch(self, texts: list[str]) -> list[str]:
+        import torch
+        if not texts:
+            return []
+
+        self.tokenizer.src_lang = self.src_lang
+        target_token_id = self.tokenizer.convert_tokens_to_ids(self.tgt_lang)
+
+        CHUNK_SIZE = 8
+        results = []
+        for i in range(0, len(texts), CHUNK_SIZE):
+            chunk = texts[i : i + CHUNK_SIZE]
+            inputs = self.tokenizer(chunk, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            with torch.no_grad():
+                generated_tokens = self.model.generate(
+                    **inputs,
+                    forced_bos_token_id=target_token_id,
+                    max_length=512,
+                    num_beams=2,
+                )
+            decoded = self.tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+            results.extend([remove_control_characters(d.strip()) for d in decoded])
+        return results
+
+
 class GrokTranslator(OpenAITranslator):
     # https://docs.x.ai/docs/overview#getting-started
     name = "grok"

@@ -10,6 +10,9 @@ gradio_files
 tmp
 gui/gradio_files
 gui/tmp
+models/
+*.zip
+PDFMathTranslate.exe
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.12)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.13)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -43,7 +43,7 @@
 ### Cách 1: Tải file chạy trực tiếp (Khuyên dùng)
 1. Tải phiên bản mới nhất tại mục [Releases](https://github.com/tahiep2012/PDFTranslate/releases):
    - **File thực thi:** `PDFMathTranslate.exe`
-   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.12-windows-x64.zip`
+   - **Gói nén đầy đủ:** `PDFMathTranslate-v1.0.13-windows-x64.zip`
 2. Giải nén vào một thư mục trên máy tính.
 3. Nhấp đúp chuột vào file `PDFMathTranslate.exe` (hoặc chạy `run_desktop.bat`) để mở ứng dụng.
 
@@ -81,6 +81,10 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.13] - 2026-10-23
+- **Tích hợp mô hình AI dịch thuật Meta NLLB-200 (Offline):** Bổ sung tùy chọn dịch thuật bằng mạng nơ-ron hàng đầu từ Meta (`facebook/nllb-200-distilled-600M`), dịch hoàn toàn cục bộ (100% Offline), không cần kết nối Internet, không tốn phí hay giới hạn API, hỗ trợ 200 ngôn ngữ.
+- **Tối ưu hóa vị trí lưu trữ mô hình AI:** Tự động điều hướng tải và lưu trữ toàn bộ trọng số mô hình AI sang thư mục dự án trên ổ đĩa `D:\Antigravity\PDFTranslate\models`, bảo vệ an toàn tuyệt đối dung lượng ổ hệ thống `C:`.
 
 ### [v1.0.12] - 2026-10-22
 - **Tự động làm sạch trạng thái thông báo dự phòng (Auto-Clearing UI Fallback Notice):** Tự động dọn dẹp banner cảnh báo màu vàng và hoàn trả tiêu đề tiến trình về trạng thái Gemini chuẩn ngay khi trang mới dịch thành công, loại bỏ triệt để hiện tượng thông báo bị dính lại màn hình khi chỉ gặp lỗi mạng tạm thời ở 1 trang đơn lẻ.

@@ -45,6 +45,8 @@ from pdf2zh.translator import (
     OpenAIlikedTranslator,
     QwenMtTranslator,
     X302AITranslator,
+    MarianTranslator,
+    NLLBTranslator,
 )
 from babeldoc.docvision.doclayout import OnnxModel
 from babeldoc import __version__ as babeldoc_version
@@ -96,6 +98,8 @@ service_map: dict[str, BaseTranslator] = {
     "OpenAI-liked": OpenAIlikedTranslator,
     "Ali Qwen-Translation": QwenMtTranslator,
     "302.AI": X302AITranslator,
+    "MarianMT": MarianTranslator,
+    "NLLB (Meta)": NLLBTranslator,
 }
 
 # The following variables associate strings with specific languages

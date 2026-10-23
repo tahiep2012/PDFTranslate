@@ -79,12 +79,13 @@ const LANGUAGES = [
 
 const DEFAULT_SERVICES = [
   { id: "google", name: "Google Translate", desc: "Miễn phí, tốc độ cao, không cần API Key", badge: "Khuyên dùng" },
+  { id: "gemini:gemini-flash-lite-latest", name: "Google Gemini", desc: "Mô hình Gemini Flash thế hệ mới từ Google", badge: "AI LLM" },
+  { id: "nllb", name: "Meta NLLB-200 (AI Offline)", desc: "Mô hình dịch AI 200 ngôn ngữ từ Meta, chạy Offline 100% không cần Internet", badge: "Offline AI" },
   { id: "marian", name: "MarianMT AI (Local Offline)", desc: "Mô hình dịch AI Helsinki-NLP siêu nhỏ gọn, chạy offline 100% trên máy", badge: "Local AI" },
   { id: "bing", name: "Bing Translate", desc: "Dịch vụ dịch thuật miễn phí từ Microsoft", badge: "Miễn phí" },
   { id: "openai:gpt-4o-mini", name: "OpenAI GPT-4o-mini", desc: "Dịch AI thông minh, cần OpenAI API Key", badge: "AI LLM" },
   { id: "deepseek:deepseek-chat", name: "DeepSeek-V3", desc: "Dịch tài liệu học thuật rất tốt, giá rẻ", badge: "AI LLM" },
   { id: "ollama:qwen2.5:7b", name: "Ollama (Offline)", desc: "Chạy mô hình AI cục bộ trên máy tính", badge: "Offline" },
-  { id: "gemini:gemini-flash-lite-latest", name: "Google Gemini", desc: "Mô hình Gemini Flash thế hệ mới từ Google", badge: "AI LLM" },
 ];
 
 export default function App() {
