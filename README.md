@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.17)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.18)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -81,6 +81,13 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.18] - 2026-10-24
+- **Tích hợp mô hình Google Gemma 4 31B (`gemma-4-31b-it`):**
+  - Bổ sung tùy chọn dịch thuật AI với mô hình mở thế hệ mới nhất từ Google DeepMind: **Google Gemma 4 (31B)**.
+  - Sử dụng chung 100% `GEMINI_API_KEY` hiện có từ Google AI Studio, không yêu cầu đăng ký thêm tài khoản hay API key mới.
+  - Hạn mức sử dụng cực kỳ rộng rãi: **14.400 yêu cầu/ngày (14.4K RPD)** và **30 RPM**, cao gần 30 lần so với Gemini Flash Lite miễn phí (500 RPD), cho phép dịch hàng trăm cuốn sách mỗi ngày không lo chạm hạn mức.
+  - Kế thừa đầy đủ cơ chế dịch gộp theo lô (Batch Packing), tự động làm sạch thẻ suy luận (`<think>...</think>`), kiểm soát nhịp độ an toàn và tự động fallback sang Google Translate khi mạng gặp sự cố.
 
 ### [v1.0.17] - 2026-10-24
 - **Tích hợp Groq Cloud API siêu tốc với mô hình Llama-3.1-8B-Instant:**

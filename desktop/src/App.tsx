@@ -80,7 +80,8 @@ const LANGUAGES = [
 const DEFAULT_SERVICES = [
   { id: "google", name: "Google Translate", desc: "Miễn phí, tốc độ cao, không cần API Key", badge: "Khuyên dùng" },
   { id: "groq:llama-3.1-8b-instant", name: "Groq (Llama 3.1 8B)", desc: "Mô hình Llama 3.1 8B siêu tốc độ trên chip Groq LPU, miễn phí", badge: "Siêu Tốc AI" },
-  { id: "gemini:gemini-flash-lite-latest", name: "Google Gemini", desc: "Mô hình Gemini Flash thế hệ mới từ Google", badge: "AI LLM" },
+  { id: "gemini:gemma-4-31b-it", name: "Google Gemma 4 (31B)", desc: "Mô hình Gemma 4 31B thông minh, hạn mức rộng (14.4K RPD), dùng chung Gemini Key", badge: "14.4K Quota" },
+  { id: "gemini:gemini-flash-lite-latest", name: "Google Gemini Flash", desc: "Mô hình Gemini Flash thế hệ mới từ Google", badge: "AI LLM" },
   { id: "nllb", name: "Meta NLLB-200 (AI Offline)", desc: "Mô hình dịch AI 200 ngôn ngữ từ Meta, chạy Offline 100% không cần Internet", badge: "Offline AI" },
   { id: "marian", name: "MarianMT AI (Local Offline)", desc: "Mô hình dịch AI Helsinki-NLP siêu nhỏ gọn, chạy offline 100% trên máy", badge: "Local AI" },
   { id: "bing", name: "Bing Translate", desc: "Dịch vụ dịch thuật miễn phí từ Microsoft", badge: "Miễn phí" },

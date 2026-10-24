@@ -949,6 +949,8 @@ class GeminiTranslator(OpenAITranslator):
         # Map legacy or deprecated model names to current active Gemini models
         if not model or model in ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash-001"]:
             model = self.envs.get("GEMINI_MODEL") or "gemini-flash-lite-latest"
+        elif model in ["gemma-4-31b", "gemma 4 31b", "gemma-4-31b-it"]:
+            model = "gemma-4-31b-it"
         super().__init__(
             lang_in,
             lang_out,
@@ -1055,13 +1057,27 @@ class GeminiTranslator(OpenAITranslator):
                 time.sleep(safe_interval - elapsed)
             GeminiTranslator._last_request_time = time.time()
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            **self.options,
-            messages=self.prompt_batch(chunk),
-            stream=False,
-        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                **self.options,
+                messages=self.prompt_batch(chunk),
+                stream=False,
+            )
+        except openai.NotFoundError:
+            if self.model != "gemini-flash-lite-latest":
+                logger.info(f"Gemini model {self.model} returned 404 in batch, falling back to gemini-flash-lite-latest")
+                self.model = "gemini-flash-lite-latest"
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    **self.options,
+                    messages=self.prompt_batch(chunk),
+                    stream=False,
+                )
+            else:
+                raise
         raw_text = response.choices[0].message.content or ""
+        raw_text = re.sub(r"<think>.*?</think>\s*", "", raw_text, flags=re.DOTALL)
         raw_text = self.think_filter_regex.sub("", raw_text).strip()
         parsed = self._parse_batch_response(raw_text, len(chunk))
         for i in range(len(chunk)):
@@ -1662,13 +1678,27 @@ class GroqTranslator(OpenAITranslator):
                 time.sleep(safe_interval - elapsed)
             GroqTranslator._last_request_time = time.time()
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            **self.options,
-            messages=self.prompt_batch(chunk),
-            stream=False,
-        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                **self.options,
+                messages=self.prompt_batch(chunk),
+                stream=False,
+            )
+        except openai.NotFoundError:
+            if self.model != "llama-3.1-8b-instant":
+                logger.info(f"Groq model {self.model} returned 404 in batch, falling back to llama-3.1-8b-instant")
+                self.model = "llama-3.1-8b-instant"
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    **self.options,
+                    messages=self.prompt_batch(chunk),
+                    stream=False,
+                )
+            else:
+                raise
         raw_text = response.choices[0].message.content or ""
+        raw_text = re.sub(r"<think>.*?</think>\s*", "", raw_text, flags=re.DOTALL)
         raw_text = self.think_filter_regex.sub("", raw_text).strip()
         parsed = self._parse_batch_response(raw_text, len(chunk))
         for i in range(len(chunk)):
