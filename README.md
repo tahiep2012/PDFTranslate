@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.18)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.19)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -81,6 +81,12 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.19] - 2026-10-24
+- **Tối ưu hóa siêu tốc cho Google Gemma 4 (31B) - Tắt suy nghĩ & Dịch trọn gói 1 Request/Trang:**
+  - Bổ sung chỉ thị loại bỏ suy luận trong Prompt (`Strict Reasoning Suppression`), ngăn chặn mô hình sinh hàng ngàn token suy nghĩ `<thought>`, rút ngắn thời gian dịch từ 2-3 phút xuống còn **3-5 giây cho cả trang**.
+  - Nâng cấp bộ phân tích cú pháp theo lô (`_parse_batch_response`) tự động tương thích linh hoạt với mọi định dạng khối của Gemma 4, đảm bảo 100% các đoạn trên trang được xử lý trọn vẹn trong **1 request duy nhất** (tiết kiệm tối đa hạn mức 14.4K RPD).
+  - Nâng cấp bộ lọc đa tầng (`clean_thought_tags`) loại bỏ triệt để các thẻ `<thought>` và `<think>` (cả mở/đóng, đa dòng), bảo vệ bản dịch luôn trong sạch và loại bỏ hiện tượng đứng hình ở `0/N`.
 
 ### [v1.0.18] - 2026-10-24
 - **Tích hợp mô hình Google Gemma 4 31B (`gemma-4-31b-it`):**

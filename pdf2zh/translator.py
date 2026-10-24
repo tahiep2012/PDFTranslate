@@ -38,6 +38,18 @@ def remove_control_characters(s):
     return "".join(ch for ch in s if unicodedata.category(ch)[0] != "C")
 
 
+THOUGHT_FILTER_REGEX = re.compile(r"<(?:think|thought)>.*?</(?:think|thought)>\s*", flags=re.DOTALL | re.IGNORECASE)
+THOUGHT_UNCLOSED_REGEX = re.compile(r"^<(?:think|thought)>.*?(?=\n\n|\Z)", flags=re.DOTALL | re.IGNORECASE)
+
+
+def clean_thought_tags(text: str) -> str:
+    if not text:
+        return ""
+    text = THOUGHT_FILTER_REGEX.sub("", text)
+    text = THOUGHT_UNCLOSED_REGEX.sub("", text)
+    return text.strip()
+
+
 class BaseTranslator:
     name = "base"
     envs = {}
@@ -180,7 +192,7 @@ class BaseTranslator:
                     "\n\n"
                     f"Translate the following markdown source text to {self.lang_out}. "
                     "Keep the formula notation {v*} unchanged. "
-                    "Output translation directly without any additional text."
+                    "Output translation directly without any additional text, explanations, or <thought>/<think> reasoning tags."
                     "\n\n"
                     f"Source Text: {text}"
                     "\n\n"
@@ -535,7 +547,8 @@ class OpenAITranslator(BaseTranslator):
             "1. Output ONLY the translated blocks using the exact format: <block id=\"N\">translated text</block>\n"
             "2. Preserve the exact order and IDs from 0 to N-1.\n"
             "3. Keep all special placeholders like {v0}, {v1}, etc. exactly unchanged.\n"
-            "4. Do NOT include any explanations, greetings, or notes."
+            "4. Do NOT output any explanations, greetings, notes, or <thought>/<think> reasoning tags.\n"
+            "5. Immediately start your output with <block id=\"0\">."
         )
         return [
             {
@@ -546,8 +559,9 @@ class OpenAITranslator(BaseTranslator):
 
     def _parse_batch_response(self, response_text: str, expected_count: int) -> list[str | None]:
         results = [None] * expected_count
+        response_text = clean_thought_tags(response_text)
         pattern = re.compile(
-            r'(?:<block\s+id=["\']?(\d+)["\']?>|\[(?:BLOCK_)?(\d+)\])\s*(.*?)(?=(?:<block\s+id=["\']?\d+["\']?>|\[(?:BLOCK_)?\d+\]|</block>|\[/(?:BLOCK_)?\d+\]|\Z))',
+            r'(?:<block\s+(?:id=)?["\']?(\d+)["\']?>|\[(?:BLOCK_)?(\d+)\])\s*(.*?)(?=(?:<block\s+(?:id=)?["\']?\d+["\']?>|\[(?:BLOCK_)?\d+\]|</block>|\[/(?:BLOCK_)?\d+\]|\Z))',
             re.DOTALL | re.IGNORECASE,
         )
         for m in pattern.finditer(response_text):
@@ -556,6 +570,7 @@ class OpenAITranslator(BaseTranslator):
                 idx = int(idx_str)
                 content = m.group(3).strip()
                 content = re.sub(r'</block>$|\[/(?:BLOCK_)?\d+\]$', '', content, flags=re.IGNORECASE).strip()
+                content = clean_thought_tags(content)
                 if 0 <= idx < expected_count and not results[idx]:
                     results[idx] = content
             except Exception:
@@ -656,9 +671,9 @@ class OpenAITranslator(BaseTranslator):
         self.add_cache_impact_parameters("stop", self.options.get("stop"))
         self.add_cache_impact_parameters("max_tokens", self.options.get("max_tokens"))
         self.add_cache_impact_parameters("prompt", self.prompt("", self.prompttext))
-        think_filter_regex = r"^<think>.+?\n*(</think>|\n)*(</think>)\n*"
+        think_filter_regex = r"<(?:think|thought)>.*?</(?:think|thought)>\s*|^<(?:think|thought)>.*?(?=\n\n|\Z)"
         self.add_cache_impact_parameters("think_filter_regex", think_filter_regex)
-        self.think_filter_regex = re.compile(think_filter_regex, flags=re.DOTALL)
+        self.think_filter_regex = re.compile(think_filter_regex, flags=re.DOTALL | re.IGNORECASE)
         # Parse stream option from config (default to True for OpenAI)
         stream_val = self.envs.get("OPENAI_STREAM", "true").lower()
         self.stream = stream_val == "true"
@@ -695,6 +710,7 @@ class OpenAITranslator(BaseTranslator):
                 if hasattr(response, "error"):
                     raise ValueError("Error response from Service", response.error)
             content = response.choices[0].message.content.strip()
+        content = clean_thought_tags(content)
         content = self.think_filter_regex.sub("", content).strip()
         return content
 
@@ -1077,8 +1093,7 @@ class GeminiTranslator(OpenAITranslator):
             else:
                 raise
         raw_text = response.choices[0].message.content or ""
-        raw_text = re.sub(r"<think>.*?</think>\s*", "", raw_text, flags=re.DOTALL)
-        raw_text = self.think_filter_regex.sub("", raw_text).strip()
+        raw_text = clean_thought_tags(raw_text)
         parsed = self._parse_batch_response(raw_text, len(chunk))
         for i in range(len(chunk)):
             if not parsed[i]:
@@ -1698,8 +1713,7 @@ class GroqTranslator(OpenAITranslator):
             else:
                 raise
         raw_text = response.choices[0].message.content or ""
-        raw_text = re.sub(r"<think>.*?</think>\s*", "", raw_text, flags=re.DOTALL)
-        raw_text = self.think_filter_regex.sub("", raw_text).strip()
+        raw_text = clean_thought_tags(raw_text)
         parsed = self._parse_batch_response(raw_text, len(chunk))
         for i in range(len(chunk)):
             if not parsed[i]:
@@ -1861,6 +1875,7 @@ class OpenAIlikedTranslator(OpenAITranslator):
                 if hasattr(response, "error"):
                     raise ValueError("Error response from Service", response.error)
             content = response.choices[0].message.content.strip()
+        content = clean_thought_tags(content)
         content = self.think_filter_regex.sub("", content).strip()
         return content
 
