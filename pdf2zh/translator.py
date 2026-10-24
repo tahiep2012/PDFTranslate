@@ -1517,18 +1517,55 @@ class GroqTranslator(OpenAITranslator):
     name = "groq"
     envs = {
         "GROQ_API_KEY": None,
-        "GROQ_MODEL": "llama-3-3-70b-versatile",
+        "GROQ_MODEL": "llama-3.1-8b-instant",
     }
     CustomPrompt = True
+    supports_batch = True
+    _last_request_time = 0.0
+    _lock = threading.Lock()
+    _quota_exhausted = False
+    _fallback_page = None
+    _fallback_reason = ""
+    _current_page_is_fallback = False
+
+    @classmethod
+    def get_fallback_status(cls):
+        if cls._quota_exhausted:
+            p_str = f"trang {cls._fallback_page}" if cls._fallback_page else "trang hiện tại"
+            return {
+                "active": True,
+                "permanent": True,
+                "page": cls._fallback_page,
+                "reason": cls._fallback_reason or "Hết quota Groq",
+                "message": f"Đã tự động chuyển từ Groq sang Google Translate từ {p_str} ({cls._fallback_reason or 'do chạm hạn mức API Groq'}).",
+            }
+        elif cls._fallback_page is not None and getattr(cls, "_current_page_is_fallback", False):
+            return {
+                "active": True,
+                "permanent": False,
+                "page": cls._fallback_page,
+                "reason": cls._fallback_reason or "Sự cố mạng tạm thời",
+                "message": f"Tạm dùng Google Translate cho trang {cls._fallback_page} do sự cố mạng; các trang sau vẫn ưu tiên Groq.",
+            }
+        return None
+
+    @classmethod
+    def reset_status(cls):
+        cls._quota_exhausted = False
+        cls._fallback_page = None
+        cls._fallback_reason = ""
+        cls._current_page_is_fallback = False
 
     def __init__(
         self, lang_in, lang_out, model, envs=None, prompt=None, ignore_cache=False
     ):
         self.set_envs(envs)
         base_url = "https://api.groq.com/openai/v1"
-        api_key = self.envs["GROQ_API_KEY"]
-        if not model:
-            model = self.envs["GROQ_MODEL"]
+        api_key = self.envs.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError("Vui lòng nhập Groq API Key (gsk_...) trong menu Cài đặt (biểu tượng bánh răng) trước khi dịch.")
+        if not model or model in ["llama-3-3-70b-versatile", "llama-3.3-70b", "llama-3.3-70b-versatile"]:
+            model = self.envs.get("GROQ_MODEL") or "llama-3.1-8b-instant"
         super().__init__(
             lang_in,
             lang_out,
@@ -1537,7 +1574,142 @@ class GroqTranslator(OpenAITranslator):
             api_key=api_key,
             ignore_cache=ignore_cache,
         )
+        self.stream = False
+        self._fallback_translator = None
         self.prompttext = prompt
+        self.add_cache_impact_parameters("prompt", self.prompt("", self.prompttext))
+
+    @retry(
+        retry=retry_if_exception_type((
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+            openai.APITimeoutError,
+        )),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1.5, min=2, max=6),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Groq API busy ({retry_state.outcome.exception()}), retrying in {retry_state.next_action.sleep:.1f}s... "
+            f"(Attempt {retry_state.attempt_number}/3)"
+        ),
+    )
+    def _call_groq_with_retry(self, text: str) -> str:
+        with GroqTranslator._lock:
+            now = time.time()
+            elapsed = now - GroqTranslator._last_request_time
+            safe_interval = 2.0
+            if elapsed < safe_interval:
+                time.sleep(safe_interval - elapsed)
+            GroqTranslator._last_request_time = time.time()
+
+        return super().do_translate(text)
+
+    def do_translate(self, text: str) -> str:
+        if not GroqTranslator._quota_exhausted:
+            try:
+                res = self._call_groq_with_retry(text)
+                GroqTranslator._current_page_is_fallback = False
+                return res
+            except Exception as e:
+                err_str = str(e).lower()
+                current_p = getattr(self, "current_page_idx", None)
+                if GroqTranslator._fallback_page is None and current_p:
+                    GroqTranslator._fallback_page = current_p
+
+                if "quota" in err_str or "rate_limit_exceeded" in err_str or "429" in err_str or "tokens per day" in err_str:
+                    logger.warning(
+                        f"Groq API quota exhausted ({e}). Auto-switching remaining translation to Google Translate."
+                    )
+                    GroqTranslator._quota_exhausted = True
+                    GroqTranslator._fallback_reason = "Hết hạn mức yêu cầu Groq (Quota 429)"
+                else:
+                    logger.warning(
+                        f"Groq API request failed ({e}). Auto-falling back to Google Translate for this paragraph."
+                    )
+                    if not GroqTranslator._fallback_reason:
+                        GroqTranslator._fallback_reason = "Sự cố mạng / lỗi kết nối Groq"
+                GroqTranslator._current_page_is_fallback = True
+
+        if self._fallback_translator is None:
+            self._fallback_translator = GoogleTranslator(
+                lang_in=self.lang_in,
+                lang_out=self.lang_out,
+                model="",
+                ignore_cache=self.ignore_cache,
+            )
+        return self._fallback_translator.do_translate(text)
+
+    @retry(
+        retry=retry_if_exception_type((
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.InternalServerError,
+            openai.APITimeoutError,
+        )),
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1.5, min=2, max=8),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Groq API busy ({retry_state.outcome.exception()}), retrying batch in {retry_state.next_action.sleep:.1f}s... "
+            f"(Attempt {retry_state.attempt_number}/4)"
+        ),
+    )
+    def _call_groq_batch_with_retry(self, chunk: list[str]) -> list[str]:
+        with GroqTranslator._lock:
+            now = time.time()
+            elapsed = now - GroqTranslator._last_request_time
+            safe_interval = 2.0
+            if elapsed < safe_interval:
+                time.sleep(safe_interval - elapsed)
+            GroqTranslator._last_request_time = time.time()
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            **self.options,
+            messages=self.prompt_batch(chunk),
+            stream=False,
+        )
+        raw_text = response.choices[0].message.content or ""
+        raw_text = self.think_filter_regex.sub("", raw_text).strip()
+        parsed = self._parse_batch_response(raw_text, len(chunk))
+        for i in range(len(chunk)):
+            if not parsed[i]:
+                parsed[i] = self.do_translate(chunk[i])
+        return parsed
+
+    def _translate_chunk_with_retry(self, chunk: list[str]) -> list[str]:
+        if not GroqTranslator._quota_exhausted:
+            try:
+                res = self._call_groq_batch_with_retry(chunk)
+                GroqTranslator._current_page_is_fallback = False
+                return res
+            except Exception as e:
+                err_str = str(e).lower()
+                current_p = getattr(self, "current_page_idx", None)
+                if GroqTranslator._fallback_page is None and current_p:
+                    GroqTranslator._fallback_page = current_p
+
+                if "quota" in err_str or "rate_limit_exceeded" in err_str or "429" in err_str or "tokens per day" in err_str:
+                    logger.warning(
+                        f"Groq API quota exhausted in batch ({e}). Auto-switching remaining translation to Google Translate."
+                    )
+                    GroqTranslator._quota_exhausted = True
+                    GroqTranslator._fallback_reason = "Hết hạn mức yêu cầu Groq (Quota 429)"
+                else:
+                    logger.warning(
+                        f"Groq batch request temporary error ({e}). Using Google Translate for this block."
+                    )
+                    if not GroqTranslator._fallback_reason:
+                        GroqTranslator._fallback_reason = "Sự cố mạng / lỗi kết nối Groq"
+                GroqTranslator._current_page_is_fallback = True
+
+        if self._fallback_translator is None:
+            self._fallback_translator = GoogleTranslator(
+                lang_in=self.lang_in,
+                lang_out=self.lang_out,
+                model="",
+                ignore_cache=self.ignore_cache,
+            )
+        return [self._fallback_translator.do_translate(t) for t in chunk]
 
 
 class DeepseekTranslator(OpenAITranslator):

@@ -9,7 +9,7 @@
 
 **Phần mềm dịch thuật tài liệu khoa học, sách chuyên ngành, báo cáo kỹ thuật PDF giữ nguyên 100% bố cục, công thức toán học và bảng biểu.**
 
-[Tải về bản mới nhất (v1.0.16)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
+[Tải về bản mới nhất (v1.0.17)](#huong-dan-cai-dat) • [Tính năng nổi bật](#tinh-nang-noi-bat) • [Lịch sử cập nhật](#lich-su-cap-nhat) • [Hướng dẫn sử dụng](#huong-dan-su-dung)
 
 </div>
 
@@ -81,6 +81,13 @@ npm run tauri dev
 ---
 
 ## 📝 Lịch Sử Cập Nhật (Changelog)
+
+### [v1.0.17] - 2026-10-24
+- **Tích hợp Groq Cloud API siêu tốc với mô hình Llama-3.1-8B-Instant:**
+  - Bổ sung tùy chọn dịch thuật AI siêu tốc độ trên nền tảng phần cứng LPU của Groq Cloud với mô hình `llama-3.1-8b-instant`.
+  - Hỗ trợ xử lý dịch gộp theo lô (`Batch Translation`), kiểm soát nhịp độ an toàn (`Rate Limit Pacing`) 30 RPM, tự động retry với exponential backoff.
+  - Tích hợp cơ chế tự động chuyển tiếp mượt mà sang Google Translate (`Auto-Fallback`) khi hết hạn mức quota hoặc mất kết nối, đảm bảo tiến trình dịch sách PDF không bao giờ bị gián đoạn hay treo ứng dụng.
+  - Bổ sung ô nhập Groq API Key (`gsk_...`) trực quan trong màn hình Cài đặt và tự động lưu cấu hình an toàn trên máy người dùng.
 
 ### [v1.0.16] - 2026-10-23
 - **Căn giữa đồng trục nội tại & Tự thích ứng lề lệch gáy sách (Coaxial Self-Centering & Gutter Margin Adaptation):**

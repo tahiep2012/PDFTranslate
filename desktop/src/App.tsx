@@ -79,6 +79,7 @@ const LANGUAGES = [
 
 const DEFAULT_SERVICES = [
   { id: "google", name: "Google Translate", desc: "Miễn phí, tốc độ cao, không cần API Key", badge: "Khuyên dùng" },
+  { id: "groq:llama-3.1-8b-instant", name: "Groq (Llama 3.1 8B)", desc: "Mô hình Llama 3.1 8B siêu tốc độ trên chip Groq LPU, miễn phí", badge: "Siêu Tốc AI" },
   { id: "gemini:gemini-flash-lite-latest", name: "Google Gemini", desc: "Mô hình Gemini Flash thế hệ mới từ Google", badge: "AI LLM" },
   { id: "nllb", name: "Meta NLLB-200 (AI Offline)", desc: "Mô hình dịch AI 200 ngôn ngữ từ Meta, chạy Offline 100% không cần Internet", badge: "Offline AI" },
   { id: "marian", name: "MarianMT AI (Local Offline)", desc: "Mô hình dịch AI Helsinki-NLP siêu nhỏ gọn, chạy offline 100% trên máy", badge: "Local AI" },
@@ -117,6 +118,7 @@ export default function App() {
   const [openaiKey, setOpenaiKey] = useState<string>(localStorage.getItem("OPENAI_API_KEY") || "");
   const [deepseekKey, setDeepseekKey] = useState<string>(localStorage.getItem("DEEPSEEK_API_KEY") || "");
   const [geminiKey, setGeminiKey] = useState<string>(localStorage.getItem("GEMINI_API_KEY") || "");
+  const [groqKey, setGroqKey] = useState<string>(localStorage.getItem("GROQ_API_KEY") || "");
 
   // AI Context & Glossary State
   const [customPrompt, setCustomPrompt] = useState<string>(() => localStorage.getItem("pdf2zh_custom_glossary") || "");
@@ -377,6 +379,7 @@ export default function App() {
     if (openaiKey) envs["OPENAI_API_KEY"] = openaiKey;
     if (deepseekKey) envs["DEEPSEEK_API_KEY"] = deepseekKey;
     if (geminiKey) envs["GEMINI_API_KEY"] = geminiKey;
+    if (groqKey) envs["GROQ_API_KEY"] = groqKey;
 
     let targetService = service;
 
@@ -442,6 +445,7 @@ export default function App() {
     localStorage.setItem("OPENAI_API_KEY", openaiKey);
     localStorage.setItem("DEEPSEEK_API_KEY", deepseekKey);
     localStorage.setItem("GEMINI_API_KEY", geminiKey);
+    localStorage.setItem("GROQ_API_KEY", groqKey);
     setShowSettings(false);
   };
 
@@ -1392,6 +1396,17 @@ export default function App() {
                   value={geminiKey}
                   onChange={(e) => setGeminiKey(e.target.value)}
                   placeholder="AIzaSy..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-300 block mb-1 font-medium">Groq Cloud API Key (gsk_...)</label>
+                <input
+                  type="password"
+                  value={groqKey}
+                  onChange={(e) => setGroqKey(e.target.value)}
+                  placeholder="gsk_..."
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
                 />
               </div>

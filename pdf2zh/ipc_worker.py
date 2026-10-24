@@ -110,10 +110,11 @@ def emit(event_type: str, **data):
 def run_translation(request_data: dict):
     from pdf2zh.doclayout import ModelInstance, OnnxModel
     from pdf2zh.high_level import translate
-    from pdf2zh.translator import GeminiTranslator
+    from pdf2zh.translator import GeminiTranslator, GroqTranslator
 
     # Reset any previous session status
     GeminiTranslator.reset_status()
+    GroqTranslator.reset_status()
 
     input_file = request_data.get("file")
     if not input_file or not Path(input_file).exists():
@@ -259,7 +260,7 @@ def run_translation(request_data: dict):
 
         exp_fmt = request_data.get("export_format", "both")
         emit("progress", value=1.0, stage="done", message="Hoàn thành dịch tài liệu!")
-        fb_status = GeminiTranslator.get_fallback_status()
+        fb_status = GeminiTranslator.get_fallback_status() or GroqTranslator.get_fallback_status()
         fallback_notice = fb_status.get("message") if (fb_status and fb_status.get("permanent")) else None
         emit(
             "success",
